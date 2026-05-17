@@ -1,0 +1,349 @@
+import { useCallback, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type {
+  AppointmentCreateRequest,
+  AppointmentOutput,
+  ClientWithPetsOutput,
+  ServiceOutput,
+} from '@mygroomtime/shared';
+import { listClients, getClient } from '../../lib/clients-api';
+import { listServices } from '../../lib/services-api';
+import {
+  cancelAppointment,
+  createAppointment,
+  getDayBuffers,
+  listAppointments,
+  updateAppointment,
+} from '../../lib/appointments-api';
+import {
+  formatHeaderLabel,
+  rangeForView,
+  snapToSlot,
+  startOfDay,
+  stepForView,
+  type CalendarView,
+} from './date-nav';
+import { useViewMode } from './use-view-mode';
+import { CalendarHeader } from './header';
+import { DayView } from './day-view';
+import { WeekView } from './week-view';
+import { MonthView } from './month-view';
+import { NewAppointmentSheet } from './new-appointment-sheet';
+import { DetailDrawer } from './detail-drawer';
+import { Toast } from './toast';
+import {
+  buildBufferLookup,
+  computeNonDroppableZones,
+  conflictToastMessage,
+  findDropConflict,
+  type ConflictCheck,
+} from './drag-zones';
+
+const APPT_KEY = (view: CalendarView, anchorIso: string): readonly unknown[] =>
+  ['appointments', view, anchorIso] as const;
+
+const BUFFER_KEY = (dayIso: string): readonly unknown[] => ['appointment-buffers', dayIso] as const;
+
+export default function CalendarRoute(): JSX.Element {
+  const qc = useQueryClient();
+  const { view, setView } = useViewMode();
+  const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetInitial, setSheetInitial] = useState<Date>(() => snapToSlot(new Date()));
+  const [openDetailId, setOpenDetailId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [now, setNow] = useState<Date>(() => new Date());
+
+  const range = useMemo(() => rangeForView(view, anchor), [view, anchor]);
+  const dayIso = useMemo(() => startOfDay(anchor).toISOString(), [anchor]);
+
+  const apptQuery = useQuery({
+    queryKey: APPT_KEY(view, range.from.toISOString()),
+    queryFn: async () => {
+      const res = await listAppointments(range.from.toISOString(), range.to.toISOString());
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data.appointments;
+    },
+  });
+
+  const buffersQuery = useQuery({
+    queryKey: BUFFER_KEY(dayIso),
+    enabled: view === 'day',
+    queryFn: async () => {
+      const res = await getDayBuffers(dayIso);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+
+  const clientsQuery = useQuery({
+    queryKey: ['clients', 'list-for-calendar'],
+    queryFn: async () => {
+      const res = await listClients();
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data.clients;
+    },
+  });
+
+  const servicesQuery = useQuery({
+    queryKey: ['services', 'active'],
+    queryFn: async () => {
+      const res = await listServices();
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data.services;
+    },
+  });
+
+  const clientsWithPetsQuery = useQuery({
+    queryKey: ['clients', 'with-pets'],
+    enabled: (clientsQuery.data?.length ?? 0) > 0,
+    queryFn: async (): Promise<ClientWithPetsOutput[]> => {
+      const ids = (clientsQuery.data ?? []).map((c) => c.id);
+      const results: ClientWithPetsOutput[] = [];
+      for (const id of ids) {
+        const r = await getClient(id);
+        if (r.ok) results.push(r.data.client);
+      }
+      return results;
+    },
+  });
+
+  const createMut = useMutation({
+    mutationFn: async (payload: AppointmentCreateRequest) => {
+      const res = await createAppointment(payload);
+      if (!res.ok) {
+        const e = new Error(res.error.message);
+        (e as Error & { status?: number }).status = res.error.status;
+        throw e;
+      }
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['appointments'] });
+      void qc.invalidateQueries({ queryKey: ['appointment-buffers'] });
+      setSheetOpen(false);
+    },
+    onError: (err) => {
+      const status = (err as Error & { status?: number }).status;
+      if (status === 409) {
+        setToast(err.message);
+      }
+    },
+  });
+
+  const cancelMut = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await cancelAppointment(id);
+      if (!res.ok) throw new Error(res.error.message);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['appointments'] });
+      void qc.invalidateQueries({ queryKey: ['appointment-buffers'] });
+      setOpenDetailId(null);
+    },
+    onError: (err) => setToast((err as Error).message),
+  });
+
+  const notesMut = useMutation({
+    mutationFn: async (args: { id: string; notes: string }) => {
+      const res = await updateAppointment(args.id, { notes: args.notes });
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['appointments'] });
+    },
+    onError: (err) => setToast((err as Error).message),
+  });
+
+  const rescheduleMut = useMutation({
+    mutationFn: async (args: { id: string; start: Date }) => {
+      const res = await updateAppointment(args.id, { start: args.start.toISOString() });
+      if (!res.ok) {
+        const e = new Error(res.error.message);
+        (e as Error & { status?: number; payload?: unknown }).status = res.error.status;
+        throw e;
+      }
+      return res.data;
+    },
+    onMutate: async (args) => {
+      await qc.cancelQueries({ queryKey: ['appointments'] });
+      const previous = qc.getQueryData<AppointmentOutput[]>(
+        APPT_KEY(view, range.from.toISOString()),
+      );
+      if (previous) {
+        const optimistic = previous.map((a) =>
+          a.id === args.id
+            ? {
+                ...a,
+                start: args.start.toISOString(),
+                end: new Date(args.start.getTime() + a.durationMin * 60_000).toISOString(),
+              }
+            : a,
+        );
+        qc.setQueryData(APPT_KEY(view, range.from.toISOString()), optimistic);
+      }
+      return { previous };
+    },
+    onError: (err, _args, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(APPT_KEY(view, range.from.toISOString()), ctx.previous);
+      }
+      setToast((err as Error).message);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['appointments'] });
+      void qc.invalidateQueries({ queryKey: ['appointment-buffers'] });
+    },
+  });
+
+  const appointments: AppointmentOutput[] = apptQuery.data ?? [];
+  const services: ServiceOutput[] = servicesQuery.data ?? [];
+  const clientsWithPets: ClientWithPetsOutput[] = clientsWithPetsQuery.data ?? [];
+  const buffers = useMemo(
+    () => buildBufferLookup(buffersQuery.data?.buffers ?? []),
+    [buffersQuery.data],
+  );
+
+  const validateProposal = useCallback(
+    (id: string, proposedStart: Date): ConflictCheck => {
+      const src = appointments.find((x) => x.id === id);
+      if (!src) return { ok: true };
+      const zones = computeNonDroppableZones({
+        day: anchor,
+        now,
+        appointments,
+        buffers,
+        excludeId: id,
+      });
+      return findDropConflict({
+        proposedStartMs: proposedStart.getTime(),
+        durationMin: src.durationMin,
+        excludeId: id,
+        zones,
+        nowMs: now.getTime(),
+      });
+    },
+    [anchor, appointments, buffers, now],
+  );
+
+  const onMoveAttempt = useCallback(
+    (id: string, proposedStart: Date, check: ConflictCheck): void => {
+      if (!check.ok) {
+        const msg = conflictToastMessage(check);
+        if (msg) setToast(msg);
+        return;
+      }
+      setNow(new Date());
+      rescheduleMut.mutate({ id, start: proposedStart });
+    },
+    [rescheduleMut],
+  );
+
+  function nudge(dir: 1 | -1): void {
+    setAnchor((d) => stepForView(view)(d, dir));
+  }
+
+  function openSheetAt(d: Date): void {
+    setSheetInitial(d);
+    setSheetOpen(true);
+  }
+
+  function openNewFromHeader(): void {
+    const n = new Date();
+    const base = startOfDay(anchor);
+    base.setHours(n.getHours(), n.getMinutes(), 0, 0);
+    openSheetAt(snapToSlot(base));
+  }
+
+  const selected = appointments.find((a) => a.id === openDetailId) ?? null;
+
+  return (
+    <main className="min-h-screen bg-white text-gray-900">
+      <div className="mx-auto flex min-h-screen max-w-3xl flex-col">
+        <CalendarHeader
+          view={view}
+          label={formatHeaderLabel(view, anchor)}
+          onPrev={() => nudge(-1)}
+          onToday={() => setAnchor(startOfDay(new Date()))}
+          onNext={() => nudge(1)}
+          onViewChange={setView}
+          onNew={openNewFromHeader}
+        />
+        <div className="flex items-center justify-end gap-3 px-3 py-2 text-xs">
+          <Link to="/clients" className="text-gray-600 underline">
+            Clients
+          </Link>
+          <Link to="/settings/services" className="text-gray-600 underline">
+            Settings
+          </Link>
+        </div>
+        <div className="flex-1 overflow-x-hidden overflow-y-auto pb-12">
+          {apptQuery.isLoading ? (
+            <p className="px-4 py-6 text-sm text-gray-500">Loading calendar…</p>
+          ) : apptQuery.isError ? (
+            <p className="px-4 py-6 text-sm text-red-600">
+              {(apptQuery.error as Error).message}
+            </p>
+          ) : view === 'day' ? (
+            <DayView
+              day={anchor}
+              appointments={appointments}
+              buffers={buffers}
+              now={now}
+              onTapSlot={openSheetAt}
+              onTapAppointment={(a) => setOpenDetailId(a.id)}
+              onMoveAttempt={onMoveAttempt}
+              validateProposal={validateProposal}
+              onAnnounce={(msg) => setToast(msg)}
+            />
+          ) : view === 'week' ? (
+            <WeekView
+              anchor={anchor}
+              appointments={appointments}
+              onTapSlot={openSheetAt}
+              onTapAppointment={(a) => setOpenDetailId(a.id)}
+            />
+          ) : (
+            <MonthView
+              anchor={anchor}
+              appointments={appointments}
+              onPickDay={(d) => {
+                setView('day');
+                setAnchor(startOfDay(d));
+              }}
+            />
+          )}
+        </div>
+
+        <NewAppointmentSheet
+          open={sheetOpen}
+          initialStart={sheetInitial}
+          clients={clientsWithPets}
+          services={services}
+          submitting={createMut.isPending}
+          submitError={
+            createMut.isError && (createMut.error as Error & { status?: number }).status !== 409
+              ? (createMut.error as Error).message
+              : null
+          }
+          onClose={() => setSheetOpen(false)}
+          onSubmit={(payload) => createMut.mutate(payload)}
+        />
+
+        <DetailDrawer
+          appointment={selected}
+          onClose={() => setOpenDetailId(null)}
+          onCancel={(id) => cancelMut.mutate(id)}
+          onSaveNotes={async (id, notes) => {
+            await notesMut.mutateAsync({ id, notes });
+          }}
+          busy={cancelMut.isPending || notesMut.isPending}
+        />
+
+        <Toast message={toast} onDismiss={() => setToast(null)} />
+      </div>
+    </main>
+  );
+}

@@ -1,0 +1,7 @@
+node_modules
+dist
+.turbo
+.vite
+pnpm-lock.yaml
+**/generated/**
+**/prisma/migrations/**

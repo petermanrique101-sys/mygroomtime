@@ -37,8 +37,8 @@ Process discipline:
 | 9 | Drag-to-reschedule + drive-time blackout windows | ✅ done, committed |
 | 10 | Stripe twin + adapter + subscription billing + webhooks | ✅ done, committed |
 | 11 | Public booking page (read-only) with subdomain routing | ✅ done, committed |
-| **12** | **Public booking submit + Stripe Connect deposit** | **← next, prompt in `NEXT_CHUNK.md`** |
-| 13 | Tier gating + upgrade/downgrade flow | pending |
+| 12 | Public booking submit + Stripe Connect deposit | ✅ done, committed |
+| **13** | **Tier gating + upgrade/downgrade flow** | **← next, stub in `NEXT_CHUNK.md` (two policy questions to resolve first)** |
 | 14 | Twin: Twilio + adapter + outbound SMS | pending |
 | 15 | Scheduled SMS jobs (48h, 2h, post-appt) | pending |
 | 16 | Route optimization + day route view | pending |
@@ -70,6 +70,18 @@ Plan enum: `unpaid | starter | pro | business | past_due | canceled`.
 - **Pro** ($99): public booking page enabled, route optimization, recurring, GCal sync.
 - **Business** ($149): + multi-vehicle dispatch + payroll splits.
 - Public booking page: `starter`/`unpaid`/`canceled` → 404; `past_due` → render with disabled Book button; `pro`/`business` → normal.
+
+### Stripe Connect + public booking submit (chunk 12)
+- Connect onboarding is **lazy** — first visit to `/settings/payments` creates the connected account. Don't bake this into signup.
+- Public booking submit requires `Tenant.stripeConnectChargesEnabled=true`. If false: booking page renders services but **disables Book** (chunk-11 `past_due` rendering pattern). Submit endpoint returns `409 payments_not_ready`.
+- `BookingPageRequest` is the staging row created at submit. **Promoted to `Appointment` by the `payment_intent.succeeded` webhook handler**, not by the submit route. The confirmation page polls status independently — if `payment_intent` is `succeeded` it shows "Booked!" even before the appointment row exists.
+- **Idempotency**: submit reuses an existing pending `BookingPageRequest` keyed on `{serviceId, requestedStart, ownerPhone}`. `bookingRequestId` is passed as Stripe idempotency-key on payment intent creation.
+- **Match-or-create Client**: 10-digit phone-suffix comparison. `Client.phone` stays as entered (not normalized). International rollout will require libphonenumber — flagged in `payment-intent-succeeded.ts`.
+- **Geocode at submit**: real customer address geocoded inline; `ZERO_RESULTS` → 400 with friendly copy, no DB writes. Slot re-validated with **real customer coords** via `canPlaceAppointment` — chunk-11's depot-coord placeholder is no longer load-bearing at submit time.
+- **Expiry**: lazy. `pending_payment` rows past 30-min TTL flip to `expired` in `availability.ts` (before computing candidates) and in `booking-status.ts` (per-row on poll). No scheduled sweeper until chunk 17+.
+- **Application fee = 0** in v1. Direct charge on connected account via `transfer_data[destination]` + `on_behalf_of`. `// TODO v2: monetize Connect` marker in adapter. Don't change this without a product decision.
+- **Email confirmation**: stdout adapter only (chunk 22 swaps to SES). **SMS confirmation marker** `// chunk 14: enqueue SMS confirmation` in `payment-intent-succeeded.ts` — chunk 14 wires twilio.
+- **Twin Stripe.js stub**: real `loadStripe()` only talks to js.stripe.com. Web detects `pk_twin_` publishable key and renders a stub Payment Element that hits `/public/:slug/bookings/:id/twin-confirm`. Live mode keeps real Payment Element + Stripe sandbox. The twin-confirm route 404s in live mode.
 
 ### Subdomain routing (chunk 11)
 Local dev: `<slug>.localhost:5173` works natively in Chrome/Firefox.
@@ -215,14 +227,34 @@ Tenants don't get a Vehicle on signup. `ensureDefaultVehicle(tenantId)` lazy-cre
 - `Tenant.phone` added in migration.
 - 13 new api tests, 10 subdomain tests, 5 public web tests. 117 api tests total.
 
+### Chunk 12 — Connect onboarding + public booking submit
+- Stripe Connect onboarding is **lazy**: connected account created on first visit to `/settings/payments`. Onboarding URL redirects to Stripe (twin auto-completes in dev), returns to the same page. `account.updated` webhook syncs `Tenant.stripeConnectChargesEnabled`/`payoutsEnabled`. The GET endpoint refetches `getConnectAccount` on every load so post-redirect state feels instant even if the webhook hasn't arrived.
+- Submit flow: form → geocode customer address inline → re-validate slot with **real customer coords** via `canPlaceAppointment` → create `BookingPageRequest pending_payment` → create payment intent on the connected account → return `{ bookingRequestId, clientSecret }` to the Payment Element. The chunk-11 depot-coord stand-in is no longer load-bearing for submit — every booking re-checks with real coords.
+- `BookingPageRequest` is the staging row; **the webhook handler promotes it to `Appointment`** on `payment_intent.succeeded`. Snapshot fields populated from the service at promote time. `match-or-create Client by phone` (10-digit suffix comparison, no E.164 normalization v1) + match-or-create Pet by name+breed. Phone-normalization function in `payment-intent-succeeded.ts`; flagged for libphonenumber upgrade in v2 with international rollout.
+- **Idempotency, two layers:** (1) duplicate submits with same `{serviceId, requestedStart, ownerPhone}` reuse the existing pending row instead of creating a new `BookingPageRequest`; (2) the bookingRequestId is passed as Stripe idempotency-key on payment-intent creation. Webhook replay handled by chunk-10 `UNIQUE(source,eventId)` pattern.
+- **Expiry is lazy in two places** — `availability.ts` flips past-TTL `pending_payment` rows to `expired` via `updateMany` before computing candidates; `booking-status.ts` flips per-row on poll. No BullMQ until chunk 17+ adds enough scheduled work to justify it. TTL: 30 min.
+- Schema additions in `20260517120000_connect_and_booking_requests`: Tenant gets `stripeConnectAccountId/chargesEnabled/payoutsEnabled/statusUpdatedAt`. BookingPageRequest gains `addressState/Lat/Lng`, `durationMin`, `depositCents`, `expiresAt`, `petTemperamentNotes`, `petVaccinationExpiry`, new status enum (`pending_payment|succeeded|failed|expired|promoted`). Chunk 2 had gaps in BookingPageRequest — filled here.
+- **Twin/live divergence the recap missed:** real Stripe.js (`loadStripe`) refuses to talk to the twin (hardcoded to js.stripe.com). The web detects `STRIPE_PUBLISHABLE_KEY` prefix `pk_twin_` and renders a stub Payment Element that POSTs to `/public/:slug/bookings/:id/twin-confirm` instead. Live keys exercise the real Payment Element. README "Public booking flow" explains.
+- Application fee `0` on the platform v1 — `application_fee_amount: 0` with `// TODO v2: monetize Connect` marker. Direct charge on connected account via `transfer_data[destination]` + `on_behalf_of`.
+- Email confirmation via existing stdout email adapter; SMS confirmation deferred (chunk 14) with explicit `// chunk 14: enqueue SMS confirmation` marker in the webhook promote handler.
+- **PII redact list extended** for the booking submit path (customer name/phone/email/full address). New pino redact paths in `app.ts`.
+- Tests: split `submit.test.ts` (was 543 LOC, violated 400-LOC rule) into `submit.test.ts` + `submit.test-utils.ts` + `payment-intent-succeeded.test.ts` (co-located with handler). Added `fileParallelism: false` to `apps/api/vitest.config.ts` — the split exposed a race between the two files concurrently signing up tenants. Suite went 17s → 35s. Acceptable.
+- 27 → 28 API test files, 117 → 136 tests. New stripe-adapter integration tests cover Connect onboarding, PI idempotency, twin confirm with metadata round-trip, and refund.
+- Pre-existing chunk-10 guard test in `stripe.test.ts` asserted live Connect methods still throw `"not implemented"` — removed during chunk-12 follow-up. The original chunk 12 agent missed deleting it.
+- Pre-existing `apps/web/src/routes/calendar/calendar.test.tsx` is 405 LOC, 5 over the constitution. Pre-dates chunk 12; left for a future cleanup chunk.
+
 ---
 
 ## Open caveats / known minor issues
 
 - **Drag snap stutter** (chunk 9): defer until real-phone user complaints. Fix path: render unsnapped ghost separately from the snapped commit position.
-- **Booking page placeholder details screen** (chunk 11): `/public/book/:serviceId/details` shows "coming soon" — chunk 12 replaces with the real submit flow.
-- **Confirmation SMS** doesn't fire yet (twilio twin+adapter come in chunk 14). For chunk 12, the booking confirmation handler should skip SMS with a TODO marker. Email confirmation can use the existing stdout email adapter.
-- **Connect-not-yet-onboarded** state for paid tenants: chunk 12 will need to decide how the public booking page renders when tenant is `pro`/`business` but Stripe Connect onboarding is incomplete. Recommended: treat like `past_due` (render with disabled Book + "this groomer is finishing setup" copy).
+- **Confirmation SMS** doesn't fire yet (twilio twin+adapter come in chunk 14). Chunk 12 left a `// chunk 14: enqueue SMS confirmation` marker in `payment-intent-succeeded.ts`.
+- **Twin Stripe.js stub** (chunk 12): real `loadStripe()` is hardcoded to js.stripe.com and can't reach the local twin. The web detects `pk_twin_` keys and renders a stub Payment Element that hits `/public/:slug/bookings/:id/twin-confirm`. The route 404s in live mode. Not a problem for the chunk-12 dev loop but worth knowing if someone wires Apple Pay / Google Pay buttons (chunk 12 OOS) and expects them to work against the twin.
+- **`confirmTwinPaymentIntent` on the adapter interface** (chunk 12): live mode throws on call. Kept on the interface for type unity. Only used by the twin-confirm route.
+- **Manage-booking UI for customers** (chunk 12): `/public/booked/:requestId` links to `/public/manage/...` which renders a "coming soon" page. Chunk 17 (recurring + reschedule) implements the real signed-token UI.
+- **API tests require Docker** for Postgres on port 5433. `pnpm db:migrate` won't run without it. WSL2 + Docker Desktop on Windows; native Docker elsewhere. Web + twin tests are DB-free and run regardless.
+- **`apps/web/src/routes/calendar/calendar.test.tsx`** is 405 LOC, 5 over the constitution's 400-LOC rule. Pre-dates chunk 12; landed in chunk 9. Defer to a discrete cleanup chunk when other 400-LOC creep accumulates.
+- **`vitest fileParallelism: false`** for `apps/api` (chunk 12): API tests share a Postgres + signup-by-timestamp pattern. The chunk-12 test split exposed the race. Suite is 35s serial; if it grows past ~90s, fix the shared-state pattern (per-test schema or tenant-namespaced webhook prefixes) and re-enable parallelism.
 - **Tenant business hours hardcoded** Mon-Sat 8am-5pm in availability service. Tenant-configurable hours land in chunk 22.
 - **Geocode twin coverage**: Plano/McKinney/Frisco only. Extend the zip-centroid table as scenarios demand.
 - **Orphan-tenant sweep** (unpaid Tenants from abandoned signup) defers to chunk 22.
@@ -244,6 +276,7 @@ These landed as discrete edits between chunks. Listed so future debugging doesn'
 | chunk 6 → 7 | `photoUrl` input removed from pet form (upload pipeline deferred — photo upload may land as sub-chunk between 8 and 9 if scenarios demand) |
 | chunk 8 → 9 | `Tenant.defaultBufferMinutes Int @default(15)` migration (actually landed inside chunk 9, not as separate pre-flight) |
 | chunk 10 → 11 | 3 lint errors in chunk 10 files fixed post-recap (`app.ts` import type, `form-body.ts` unused var, `app.test.ts` any-typing) |
+| chunk 12 → 13 | Stale chunk-10 guard test removed (`stripe.test.ts` asserting live Connect throws "not implemented"); `submit.test.ts` palette-color fix (`#000000` → `#6b7280`); `submit.test.ts` split into 3 files for 400-LOC; `apps/api/vitest.config.ts` `fileParallelism: false` after the split |
 
 ---
 

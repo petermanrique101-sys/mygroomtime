@@ -19,20 +19,6 @@ describe('stripe adapter — wiring', () => {
     const adapter = createStripeAdapter({ ...baseEnv, mode: 'live' });
     expect(adapter.mode).toBe('live');
   });
-
-  it('live Connect methods still throw "not implemented" (chunk 12)', async () => {
-    const adapter = createStripeAdapter({ ...baseEnv, mode: 'live' });
-    await expect(
-      adapter.createConnectAccount({ email: 'x@y.test', country: 'US' }),
-    ).rejects.toThrow('not implemented: stripe.live.createConnectAccount');
-    await expect(
-      adapter.createPaymentIntent({
-        amountCents: 1000,
-        currency: 'usd',
-        connectedAccountId: 'acct_x',
-      }),
-    ).rejects.toThrow('not implemented: stripe.live.createPaymentIntent');
-  });
 });
 
 describe('parseStripeEvent — discriminated union', () => {

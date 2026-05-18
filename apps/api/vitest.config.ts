@@ -10,5 +10,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // why: API tests share a Postgres + signup global state. Running files in parallel
+    // races on tenant slug timestamps and webhook-event prefixes. Suite is fast (~17s)
+    // so serial execution is the right trade-off.
+    fileParallelism: false,
   },
 });

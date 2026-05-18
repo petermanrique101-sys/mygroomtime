@@ -43,6 +43,7 @@ export const resolvePublicTenant: preHandlerAsyncHookHandler = async (
       depotLat: true,
       depotLng: true,
       defaultBufferMinutes: true,
+      stripeConnectChargesEnabled: true,
     },
   });
 
@@ -68,5 +69,9 @@ export const resolvePublicTenant: preHandlerAsyncHookHandler = async (
     depotLng: tenant.depotLng,
     defaultBufferMinutes: tenant.defaultBufferMinutes,
   };
-  request.publicTenantReadOnly = tenant.plan === PlanTier.past_due;
+  // why: read-only when payments are paused (past_due) OR Connect isn't fully onboarded
+  // yet. Both states should render services with a disabled Book button + "contact the
+  // groomer directly" copy (chunk 12 reuses chunk 11's past_due render path).
+  request.publicTenantReadOnly =
+    tenant.plan === PlanTier.past_due || !tenant.stripeConnectChargesEnabled;
 };

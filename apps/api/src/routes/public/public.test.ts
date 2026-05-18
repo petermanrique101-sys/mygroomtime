@@ -18,7 +18,23 @@ import {
 const SLUG_PREFIX = 'public-test-';
 
 async function setTenantPlan(tenantId: string, plan: PlanTier): Promise<void> {
-  await db.global.tenant.update({ where: { id: tenantId }, data: { plan } });
+  // why: chunk 12 added Connect-readiness to the public-tenant resolver. Existing
+  // chunk-11 tests assume a Pro tenant renders as not-read-only, so flip the
+  // Connect flag along with the plan to match that expectation.
+  const isPaidPro = plan === PlanTier.pro || plan === PlanTier.business;
+  await db.global.tenant.update({
+    where: { id: tenantId },
+    data: {
+      plan,
+      ...(isPaidPro
+        ? {
+            stripeConnectAccountId: `acct_test_${tenantId.slice(-6)}`,
+            stripeConnectChargesEnabled: true,
+            stripeConnectPayoutsEnabled: true,
+          }
+        : {}),
+    },
+  });
 }
 
 async function fetchTenantSlug(tenantId: string): Promise<string> {

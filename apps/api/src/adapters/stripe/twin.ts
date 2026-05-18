@@ -13,10 +13,14 @@ import type {
   CreateConnectAccountOutput,
   CreateConnectAccountLinkInput,
   CreateConnectAccountLinkOutput,
+  GetConnectAccountInput,
+  GetConnectAccountOutput,
   CreatePaymentIntentInput,
   CreatePaymentIntentOutput,
   CreateRefundInput,
   CreateRefundOutput,
+  ConfirmTwinPaymentIntentInput,
+  ConfirmTwinPaymentIntentOutput,
   VerifyWebhookSignatureInput,
   ParsedStripeEvent,
 } from './types.js';
@@ -54,15 +58,25 @@ async function postForm<T>(
   twinUrl: string,
   path: string,
   body: Record<string, unknown>,
+  headers: Record<string, string> = {},
 ): Promise<T> {
   const res = await fetch(`${twinUrl}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
     body: toForm(body),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`stripe twin POST ${path} failed: ${res.status} ${text}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function getJson<T>(twinUrl: string, path: string): Promise<T> {
+  const res = await fetch(`${twinUrl}${path}`, { method: 'GET' });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`stripe twin GET ${path} failed: ${res.status} ${text}`);
   }
   return (await res.json()) as T;
 }
@@ -79,9 +93,14 @@ async function deleteJson<T>(twinUrl: string, path: string): Promise<T> {
 type CustomerWire = { id: string };
 type CheckoutSessionWire = { id: string; url: string };
 type SubscriptionWire = { id: string; status: string };
-type AccountWire = { id: string };
+type AccountWire = {
+  id: string;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  details_submitted: boolean;
+};
 type AccountLinkWire = { url: string };
-type PaymentIntentWire = { id: string; client_secret: string };
+type PaymentIntentWire = { id: string; client_secret: string; status: string };
 type RefundWire = { id: string };
 
 export function createStripeTwinAdapter(env: StripeAdapterEnv): StripeAdapter {
@@ -158,16 +177,37 @@ export function createStripeTwinAdapter(env: StripeAdapterEnv): StripeAdapter {
       return { url: wire.url };
     },
 
+    async getConnectAccount(
+      input: GetConnectAccountInput,
+    ): Promise<GetConnectAccountOutput> {
+      const wire = await getJson<AccountWire>(base, `/v1/accounts/${input.accountId}`);
+      return {
+        id: wire.id,
+        chargesEnabled: wire.charges_enabled,
+        payoutsEnabled: wire.payouts_enabled,
+        detailsSubmitted: wire.details_submitted,
+      };
+    },
+
     async createPaymentIntent(
       input: CreatePaymentIntentInput,
     ): Promise<CreatePaymentIntentOutput> {
-      const wire = await postForm<PaymentIntentWire>(base, '/v1/payment_intents', {
-        amount: input.amountCents,
-        currency: input.currency,
-        on_behalf_of: input.connectedAccountId,
-        metadata: input.metadata,
-      });
-      return { id: wire.id, clientSecret: wire.client_secret };
+      const headers: Record<string, string> = {};
+      if (input.idempotencyKey) headers['idempotency-key'] = input.idempotencyKey;
+      const wire = await postForm<PaymentIntentWire>(
+        base,
+        '/v1/payment_intents',
+        {
+          amount: input.amountCents,
+          currency: input.currency,
+          on_behalf_of: input.connectedAccountId,
+          transfer_data: { destination: input.connectedAccountId },
+          application_fee_amount: 0,
+          metadata: input.metadata,
+        },
+        headers,
+      );
+      return { id: wire.id, clientSecret: wire.client_secret, status: wire.status };
     },
 
     async createRefund(input: CreateRefundInput): Promise<CreateRefundOutput> {
@@ -176,6 +216,17 @@ export function createStripeTwinAdapter(env: StripeAdapterEnv): StripeAdapter {
         amount: input.amountCents,
       });
       return { id: wire.id };
+    },
+
+    async confirmTwinPaymentIntent(
+      input: ConfirmTwinPaymentIntentInput,
+    ): Promise<ConfirmTwinPaymentIntentOutput> {
+      const wire = await postForm<PaymentIntentWire>(
+        base,
+        `/v1/payment_intents/${input.paymentIntentId}/confirm`,
+        { payment_method: 'tok_visa_ok' },
+      );
+      return { id: wire.id, status: wire.status };
     },
 
     verifyWebhookSignature(input: VerifyWebhookSignatureInput): ParsedStripeEvent {

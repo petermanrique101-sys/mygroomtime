@@ -1,4 +1,4 @@
-import type { Service, TenantScopedDb } from '@mygroomtime/db';
+import { BookingRequestStatus, type Service, type TenantScopedDb } from '@mygroomtime/db';
 import {
   PUBLIC_BOOKING_CLOSE_HOUR,
   PUBLIC_BOOKING_LEAD_TIME_MIN,
@@ -50,6 +50,38 @@ export async function computeAvailableSlots(
 
   const leadCutoff = new Date(input.now.getTime() + PUBLIC_BOOKING_LEAD_TIME_MIN * 60_000);
 
+  // why: lazy sweep. Pending bookings past their 30-min TTL still hold their requested
+  // slot until expired — flipping them here on every availability read keeps the slot
+  // grid honest without needing a BullMQ worker until chunk 17+.
+  await input.scoped.bookingPageRequest.updateMany({
+    where: {
+      status: BookingRequestStatus.pending_payment,
+      expiresAt: { lte: input.now },
+    },
+    data: { status: BookingRequestStatus.expired },
+  });
+
+  const holds = await input.scoped.bookingPageRequest.findMany({
+    where: {
+      status: BookingRequestStatus.pending_payment,
+      requestedStart: {
+        gte: candidates[0]!,
+        lte: candidates[candidates.length - 1]!,
+      },
+    },
+    select: { requestedStart: true, durationMin: true },
+  });
+
+  function overlapsHold(slotStart: Date, slotDur: number): boolean {
+    const slotEnd = slotStart.getTime() + slotDur * 60_000;
+    for (const h of holds) {
+      const hStart = h.requestedStart.getTime();
+      const hEnd = hStart + h.durationMin * 60_000;
+      if (hStart < slotEnd && hEnd > slotStart.getTime()) return true;
+    }
+    return false;
+  }
+
   // why: reuse canPlaceAppointment from chunk 9 per candidate. It re-queries the day's
   // appts internally, but the cost is dominated by gmaps batching — and routing every
   // public availability check through the same conflict function keeps overlap + buffer
@@ -57,6 +89,7 @@ export async function computeAvailableSlots(
   const out: PublicAvailabilitySlot[] = [];
   for (const start of candidates) {
     if (start.getTime() < leadCutoff.getTime()) continue;
+    if (overlapsHold(start, input.service.durationMin)) continue;
     const result = await canPlaceAppointment({
       scoped: input.scoped,
       vehicleId: input.vehicleId,

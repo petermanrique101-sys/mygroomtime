@@ -106,8 +106,8 @@ export default function ServicesSettingsRoute(): JSX.Element {
       <div className="mx-auto flex min-h-screen max-w-md flex-col">
         <header className="sticky top-0 z-10 border-b border-gray-100 bg-white px-4 pb-3 pt-5">
           <div className="flex items-center justify-between">
-            <Link to="/home" className="text-sm text-gray-600 underline">
-              ← Home
+            <Link to="/settings" className="text-sm text-gray-600 underline">
+              ← Settings
             </Link>
             <h1 className="text-base font-semibold tracking-tight">Services</h1>
             <span className="w-12" />

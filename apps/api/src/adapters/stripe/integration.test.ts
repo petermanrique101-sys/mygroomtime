@@ -186,3 +186,105 @@ describe('stripe adapter ↔ twin — webhook signature roundtrip', () => {
     ).toThrow(/signature verification failed/);
   });
 });
+
+describe('stripe adapter ↔ twin — Connect onboarding + payment intent', () => {
+  function makeAdapter() {
+    return createStripeAdapter({
+      mode: 'twin',
+      secretKey: 'sk_test',
+      webhookSecret: WEBHOOK_SECRET,
+      twinUrl,
+    });
+  }
+
+  it('createConnectAccount → createConnectAccountLink → visit URL flips chargesEnabled', async () => {
+    const adapter = makeAdapter();
+    const account = await adapter.createConnectAccount({ email: 'pro@biz.test', country: 'US' });
+    expect(account.id).toMatch(/^acct_TWIN_/);
+
+    const before = await adapter.getConnectAccount({ accountId: account.id });
+    expect(before.chargesEnabled).toBe(false);
+
+    const link = await adapter.createConnectAccountLink({
+      accountId: account.id,
+      refreshUrl: 'http://example.test/settings/payments',
+      returnUrl: 'http://example.test/settings/payments',
+    });
+    expect(link.url).toContain('/__twin_onboarding/');
+
+    delivered.length = 0;
+    await fetch(link.url, { redirect: 'manual' });
+
+    const after = await adapter.getConnectAccount({ accountId: account.id });
+    expect(after.chargesEnabled).toBe(true);
+    expect(after.payoutsEnabled).toBe(true);
+    expect(after.detailsSubmitted).toBe(true);
+
+    await waitFor(() => delivered.some((e) => e.parsed.type === 'account.updated'));
+    expect(delivered.find((e) => e.parsed.type === 'account.updated')).toBeTruthy();
+  });
+
+  it('createPaymentIntent with idempotency key returns the same PI on retry', async () => {
+    const adapter = makeAdapter();
+    const account = await adapter.createConnectAccount({ email: 'idemp@biz.test', country: 'US' });
+    const key = `idemp-${Date.now()}`;
+    const first = await adapter.createPaymentIntent({
+      amountCents: 4000,
+      currency: 'usd',
+      connectedAccountId: account.id,
+      metadata: { tenantId: 't1', bookingRequestId: 'br1' },
+      idempotencyKey: key,
+    });
+    const second = await adapter.createPaymentIntent({
+      amountCents: 4000,
+      currency: 'usd',
+      connectedAccountId: account.id,
+      metadata: { tenantId: 't1', bookingRequestId: 'br1' },
+      idempotencyKey: key,
+    });
+    expect(first.id).toBe(second.id);
+  });
+
+  it('confirmTwinPaymentIntent fires payment_intent.succeeded with metadata + on_behalf_of', async () => {
+    const adapter = makeAdapter();
+    const account = await adapter.createConnectAccount({ email: 'pi@biz.test', country: 'US' });
+    const pi = await adapter.createPaymentIntent({
+      amountCents: 2500,
+      currency: 'usd',
+      connectedAccountId: account.id,
+      metadata: { tenantId: 'tConfirm', bookingRequestId: 'brConfirm' },
+    });
+    delivered.length = 0;
+    const confirmed = await adapter.confirmTwinPaymentIntent({ paymentIntentId: pi.id });
+    expect(confirmed.status).toBe('succeeded');
+
+    await waitFor(() => delivered.some((e) => e.parsed.type === 'payment_intent.succeeded'));
+    const event = delivered.find((e) => e.parsed.type === 'payment_intent.succeeded');
+    expect(event).toBeTruthy();
+    const parsed = adapter.verifyWebhookSignature({
+      payload: event!.body,
+      signature: event!.headers['stripe-signature']!,
+      secret: WEBHOOK_SECRET,
+    });
+    expect(parsed.type).toBe('payment_intent.succeeded');
+    if (parsed.type === 'payment_intent.succeeded') {
+      expect(parsed.metadata.tenantId).toBe('tConfirm');
+      expect(parsed.metadata.bookingRequestId).toBe('brConfirm');
+      expect(parsed.connectedAccountId).toBe(account.id);
+      expect(parsed.amount).toBe(2500);
+    }
+  });
+
+  it('createRefund returns a refund id for an existing PI', async () => {
+    const adapter = makeAdapter();
+    const account = await adapter.createConnectAccount({ email: 'refund@biz.test', country: 'US' });
+    const pi = await adapter.createPaymentIntent({
+      amountCents: 1500,
+      currency: 'usd',
+      connectedAccountId: account.id,
+    });
+    await adapter.confirmTwinPaymentIntent({ paymentIntentId: pi.id });
+    const refund = await adapter.createRefund({ paymentIntentId: pi.id });
+    expect(refund.id).toMatch(/^re_TWIN_/);
+  });
+});

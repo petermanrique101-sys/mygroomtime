@@ -14,10 +14,14 @@ import type {
   CreateConnectAccountOutput,
   CreateConnectAccountLinkInput,
   CreateConnectAccountLinkOutput,
+  GetConnectAccountInput,
+  GetConnectAccountOutput,
   CreatePaymentIntentInput,
   CreatePaymentIntentOutput,
   CreateRefundInput,
   CreateRefundOutput,
+  ConfirmTwinPaymentIntentInput,
+  ConfirmTwinPaymentIntentOutput,
   VerifyWebhookSignatureInput,
   ParsedStripeEvent,
 } from './types.js';
@@ -26,10 +30,6 @@ import { parseStripeEvent } from './parse.js';
 // why: pinning the API version prevents Stripe from silently bumping us mid-cycle.
 // If you upgrade the SDK, also bump this string and re-run the adapter tests.
 const PINNED_API_VERSION: Stripe.StripeConfig['apiVersion'] = '2025-02-24.acacia';
-
-function notImplemented(method: string): never {
-  throw new Error(`not implemented: stripe.live.${method}`);
-}
 
 export function createStripeLiveAdapter(env: StripeAdapterEnv): StripeAdapter {
   const client = new Stripe(env.secretKey || 'sk_live_unconfigured', {
@@ -88,22 +88,82 @@ export function createStripeLiveAdapter(env: StripeAdapterEnv): StripeAdapter {
     },
 
     async createConnectAccount(
-      _input: CreateConnectAccountInput,
+      input: CreateConnectAccountInput,
     ): Promise<CreateConnectAccountOutput> {
-      notImplemented('createConnectAccount');
+      const account = await client.accounts.create({
+        type: 'express',
+        country: input.country,
+        email: input.email,
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
+      });
+      return { id: account.id };
     },
+
     async createConnectAccountLink(
-      _input: CreateConnectAccountLinkInput,
+      input: CreateConnectAccountLinkInput,
     ): Promise<CreateConnectAccountLinkOutput> {
-      notImplemented('createConnectAccountLink');
+      const link = await client.accountLinks.create({
+        account: input.accountId,
+        refresh_url: input.refreshUrl,
+        return_url: input.returnUrl,
+        type: 'account_onboarding',
+      });
+      return { url: link.url };
     },
+
+    async getConnectAccount(
+      input: GetConnectAccountInput,
+    ): Promise<GetConnectAccountOutput> {
+      const account = await client.accounts.retrieve(input.accountId);
+      return {
+        id: account.id,
+        chargesEnabled: account.charges_enabled === true,
+        payoutsEnabled: account.payouts_enabled === true,
+        detailsSubmitted: account.details_submitted === true,
+      };
+    },
+
     async createPaymentIntent(
-      _input: CreatePaymentIntentInput,
+      input: CreatePaymentIntentInput,
     ): Promise<CreatePaymentIntentOutput> {
-      notImplemented('createPaymentIntent');
+      // why: direct charge with destination — funds settle to the connected account
+      // immediately, application_fee_amount=0 because v1 doesn't monetize Connect.
+      // TODO(v2): set application_fee_amount once we price the platform layer.
+      const pi = await client.paymentIntents.create(
+        {
+          amount: input.amountCents,
+          currency: input.currency,
+          metadata: input.metadata,
+          on_behalf_of: input.connectedAccountId,
+          transfer_data: { destination: input.connectedAccountId },
+          application_fee_amount: 0,
+          automatic_payment_methods: { enabled: true },
+        },
+        input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined,
+      );
+      if (!pi.client_secret) {
+        throw new Error('stripe.live.createPaymentIntent: Stripe returned no client_secret');
+      }
+      return { id: pi.id, clientSecret: pi.client_secret, status: pi.status };
     },
-    async createRefund(_input: CreateRefundInput): Promise<CreateRefundOutput> {
-      notImplemented('createRefund');
+
+    async createRefund(input: CreateRefundInput): Promise<CreateRefundOutput> {
+      const refund = await client.refunds.create({
+        payment_intent: input.paymentIntentId,
+        amount: input.amountCents,
+      });
+      return { id: refund.id };
+    },
+
+    async confirmTwinPaymentIntent(
+      _input: ConfirmTwinPaymentIntentInput,
+    ): Promise<ConfirmTwinPaymentIntentOutput> {
+      // why: this seam exists for dev/test against the twin only. In live, the
+      // customer browser confirms via Stripe.js — never the server.
+      throw new Error('stripe.live.confirmTwinPaymentIntent: not available in live mode');
     },
 
     verifyWebhookSignature(input: VerifyWebhookSignatureInput): ParsedStripeEvent {

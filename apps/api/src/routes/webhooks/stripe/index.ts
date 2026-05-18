@@ -39,7 +39,7 @@ export default async function stripeWebhookRoute(app: FastifyInstance): Promise<
         return;
       }
 
-      const result = await dispatchEvent(event);
+      const result = await dispatchEvent(app, event);
       if (result.kind === 'ok') {
         await markProcessed(outcome.id);
         reply.code(200).send({ received: true });

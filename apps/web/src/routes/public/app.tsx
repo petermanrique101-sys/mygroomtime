@@ -4,6 +4,8 @@ import { AppQueryProvider } from '../../lib/query-client';
 import PublicLandingRoute from './landing';
 import PublicBookRoute from './book';
 import PublicBookingDetailsRoute from './details';
+import PublicBookedRoute from './booked';
+import PublicManageNotImplementedRoute from './manage-not-implemented';
 
 function useAllowIndexing(): void {
   useEffect(() => {
@@ -24,6 +26,11 @@ export default function PublicApp({ slug }: { slug: string }): JSX.Element {
           <Route
             path="/public/:slug/book/:serviceId/details"
             element={<PublicBookingDetailsRoute />}
+          />
+          <Route path="/public/:slug/booked/:requestId" element={<PublicBookedRoute />} />
+          <Route
+            path="/public/:slug/manage/:appointmentId"
+            element={<PublicManageNotImplementedRoute />}
           />
           <Route path="*" element={<Navigate to={`/public/${slug}`} replace />} />
         </Routes>

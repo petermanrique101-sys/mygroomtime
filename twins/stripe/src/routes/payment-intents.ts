@@ -1,8 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import type { TwinPaymentIntent, TwinState, TwinPaymentIntentStatus } from '../state.js';
-import { asMetadata, asString } from '../form-body.js';
+import { asMetadata, asRecord, asString } from '../form-body.js';
 import { deliverEvent, recordEvent, type WebhookConfig } from '../webhook.js';
 import { serializePaymentIntent } from '../serialize.js';
+
+function destinationFromTransferData(v: unknown): string | undefined {
+  const rec = asRecord(v);
+  if (!rec) return undefined;
+  return asString(rec.destination);
+}
 
 type TokenOutcome = {
   status: TwinPaymentIntentStatus;
@@ -45,8 +51,23 @@ export function registerPaymentIntents(
         .code(400)
         .send({ error: { type: 'invalid_request_error', message: 'amount required' } });
     }
+    // why: real Stripe carries the connected account on `transfer_data[destination]`
+    // for direct charges with destination, with `on_behalf_of` as a separate hint.
+    // We accept either, preferring transfer_data since that's the canonical field.
     const connectedAccountId =
-      asString(body.on_behalf_of) ?? asString(body.transfer_data) ?? 'acct_TWIN_default';
+      destinationFromTransferData(body.transfer_data) ??
+      asString(body.on_behalf_of) ??
+      'acct_TWIN_default';
+    const idempotencyKey =
+      asString(req.headers['idempotency-key']) ??
+      asString(req.headers['Idempotency-Key']);
+    if (idempotencyKey) {
+      const existing = state.idempotencyKeys.get(idempotencyKey);
+      if (existing) {
+        const reused = state.paymentIntents.get(existing);
+        if (reused) return reply.code(200).send(serializePaymentIntent(reused));
+      }
+    }
     const pi: TwinPaymentIntent = {
       id: state.ids.next('pi'),
       amount,
@@ -58,6 +79,7 @@ export function registerPaymentIntents(
       metadata: asMetadata(body.metadata),
     };
     state.paymentIntents.set(pi.id, pi);
+    if (idempotencyKey) state.idempotencyKeys.set(idempotencyKey, pi.id);
     return reply.code(200).send(serializePaymentIntent(pi));
   });
 

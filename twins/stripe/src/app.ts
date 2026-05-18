@@ -50,7 +50,7 @@ export function createApp(opts: CreateAppOptions = {}): TwinAppHandle {
   app.get('/healthz', async () => ({ status: 'ok' }));
 
   registerCustomers(app, state);
-  registerAccounts(app, state);
+  registerAccounts(app, state, cfg, getOrigin);
   registerSubscriptions(app, state, cfg);
   registerCheckout(app, state, cfg, getOrigin);
   registerPaymentIntents(app, state, cfg);

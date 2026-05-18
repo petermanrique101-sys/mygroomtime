@@ -61,6 +61,9 @@ export function serializeAccount(a: TwinAccount): Record<string, unknown> {
     email: a.email,
     country: a.country,
     capabilities: a.capabilities,
+    charges_enabled: a.chargesEnabled,
+    payouts_enabled: a.payoutsEnabled,
+    details_submitted: a.detailsSubmitted,
     metadata: a.metadata,
   };
 }

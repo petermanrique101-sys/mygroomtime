@@ -14,6 +14,7 @@ import serviceRoutes from './routes/services/index.js';
 import appointmentRoutes from './routes/appointments/index.js';
 import billingRoutes from './routes/billing/index.js';
 import publicRoutes from './routes/public/index.js';
+import settingsRoutes from './routes/settings/index.js';
 import stripeWebhookRoute from './routes/webhooks/stripe/index.js';
 
 export type CreateAppOptions = {
@@ -34,6 +35,10 @@ const PII_REDACT_PATHS = [
   'req.body.zip',
   'req.body.notes',
   'req.body.data',
+  'req.body.customer',
+  'req.body.pet',
+  'req.body.firstName',
+  'req.body.lastName',
   'req.headers.cookie',
   'req.headers.authorization',
   'req.headers["stripe-signature"]',
@@ -111,6 +116,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
   await app.register(serviceRoutes);
   await app.register(appointmentRoutes);
   await app.register(billingRoutes);
+  await app.register(settingsRoutes);
   await app.register(publicRoutes);
   await app.register(stripeWebhookRoute);
 

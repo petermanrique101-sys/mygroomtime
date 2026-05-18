@@ -60,6 +60,20 @@ Run each twin only when the feature you're touching uses that adapter in twin mo
 
 The Stripe twin renders a hosted-checkout page that you can click through, or you can append `?auto=1` to the Checkout URL to complete + fire the webhook in one hop — handy for automated flows.
 
+## Public booking pages in dev
+
+The booking page lives at `<slug>.localhost:5173` (works natively in Chrome/Firefox without a hosts file). The tenant must be on the Pro or Business plan **and** Stripe Connect must be onboarded with `chargesEnabled=true` — otherwise the page renders with the Book button disabled.
+
+### Public booking flow
+
+1. Owner side, one-time: sign in → `/settings/payments` → "Set up payments". The Stripe twin returns an onboarding URL that auto-completes when visited; the browser lands back on `/settings/payments` with status "Active".
+2. Customer side: visit `<slug>.localhost:5173` → pick a service → date → time → fill the customer + pet form → submit.
+3. Submit creates a `BookingPageRequest` (status `pending_payment`) and a payment intent on the connected account. The web shows the Payment Element.
+4. In twin mode, the Payment Element renders a stub "Pay" button (detected by the `pk_twin_` prefix on `VITE_STRIPE_PUBLISHABLE_KEY`). Click it → the backend confirms the PI on the twin → the twin fires `payment_intent.succeeded` to `/webhooks/stripe`.
+5. The webhook handler promotes the `BookingPageRequest` to an `Appointment` (match-or-create on Client by phone, Pet by name+breed) and emails the customer (visible in the api logs since the email adapter is stdout in dev). The web's `/public/<slug>/booked/<requestId>` page polls the status endpoint and flips to "You're all set" within a second or two.
+
+To exercise live Stripe.js, set `VITE_STRIPE_PUBLISHABLE_KEY` to a real `pk_test_` key — the web will render the real Payment Element instead of the twin stub. The Stripe twin can't itself accept real Stripe.js API calls; live keys are for testing against the real Stripe sandbox.
+
 ## Landing page
 
 The static site at the repo root (`index.html` + `assets/` + `CNAME`) is served by GitHub Pages at [mygroomtime.com](https://mygroomtime.com). Edit those files directly to ship landing-page changes; no build step.

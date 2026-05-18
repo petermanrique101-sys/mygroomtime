@@ -76,7 +76,34 @@ export function parseStripeEvent(raw: unknown): ParsedStripeEvent {
     };
   }
 
+  if (type === 'account.updated') {
+    return {
+      type: 'account.updated',
+      id,
+      accountId: str(obj.id) ?? '',
+      chargesEnabled: bool(obj.charges_enabled),
+      payoutsEnabled: bool(obj.payouts_enabled),
+      detailsSubmitted: bool(obj.details_submitted),
+    };
+  }
+
+  if (type === 'payment_intent.succeeded') {
+    return {
+      type: 'payment_intent.succeeded',
+      id,
+      paymentIntentId: str(obj.id) ?? '',
+      amount: num(obj.amount) ?? 0,
+      currency: str(obj.currency) ?? 'usd',
+      connectedAccountId: str(obj.on_behalf_of),
+      metadata: metadataOf(obj),
+    };
+  }
+
   return { type: 'unhandled', id, rawType: type };
+}
+
+function bool(v: unknown): boolean {
+  return v === true;
 }
 
 function extractSubscriptionPeriodEnd(obj: Record<string, unknown>): number | null {

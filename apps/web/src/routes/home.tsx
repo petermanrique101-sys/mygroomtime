@@ -17,7 +17,7 @@ export default function HomeRoute(): JSX.Element {
       <div className="mx-auto flex min-h-screen max-w-md flex-col px-5 py-10">
         <div className="mb-4 flex justify-end">
           <Link
-            to="/settings/services"
+            to="/settings"
             className="inline-flex min-h-[44px] items-center rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-900"
           >
             Settings

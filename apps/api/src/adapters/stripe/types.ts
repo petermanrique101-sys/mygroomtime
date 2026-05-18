@@ -40,16 +40,28 @@ export type CreateConnectAccountLinkInput = {
 };
 export type CreateConnectAccountLinkOutput = { url: string };
 
+export type GetConnectAccountInput = { accountId: string };
+export type GetConnectAccountOutput = {
+  id: string;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+};
+
 export type CreatePaymentIntentInput = {
   amountCents: number;
   currency: string;
   connectedAccountId: string;
   metadata?: Record<string, string>;
+  idempotencyKey?: string;
 };
-export type CreatePaymentIntentOutput = { id: string; clientSecret: string };
+export type CreatePaymentIntentOutput = { id: string; clientSecret: string; status: string };
 
 export type CreateRefundInput = { paymentIntentId: string; amountCents?: number };
 export type CreateRefundOutput = { id: string };
+
+export type ConfirmTwinPaymentIntentInput = { paymentIntentId: string };
+export type ConfirmTwinPaymentIntentOutput = { id: string; status: string };
 
 export type VerifyWebhookSignatureInput = {
   payload: string | Buffer;
@@ -92,6 +104,25 @@ export type InvoicePaymentFailedEvent = {
   attemptCount: number;
 };
 
+export type AccountUpdatedEvent = {
+  type: 'account.updated';
+  id: string;
+  accountId: string;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+};
+
+export type PaymentIntentSucceededEvent = {
+  type: 'payment_intent.succeeded';
+  id: string;
+  paymentIntentId: string;
+  amount: number;
+  currency: string;
+  connectedAccountId: string | null;
+  metadata: Record<string, string>;
+};
+
 export type UnhandledStripeEvent = {
   type: 'unhandled';
   id: string;
@@ -103,6 +134,8 @@ export type ParsedStripeEvent =
   | SubscriptionUpdatedEvent
   | SubscriptionDeletedEvent
   | InvoicePaymentFailedEvent
+  | AccountUpdatedEvent
+  | PaymentIntentSucceededEvent
   | UnhandledStripeEvent;
 
 export interface StripeAdapter {
@@ -119,9 +152,15 @@ export interface StripeAdapter {
   createConnectAccountLink(
     input: CreateConnectAccountLinkInput,
   ): Promise<CreateConnectAccountLinkOutput>;
+  getConnectAccount(
+    input: GetConnectAccountInput,
+  ): Promise<GetConnectAccountOutput>;
   createPaymentIntent(
     input: CreatePaymentIntentInput,
   ): Promise<CreatePaymentIntentOutput>;
   createRefund(input: CreateRefundInput): Promise<CreateRefundOutput>;
+  confirmTwinPaymentIntent(
+    input: ConfirmTwinPaymentIntentInput,
+  ): Promise<ConfirmTwinPaymentIntentOutput>;
   verifyWebhookSignature(input: VerifyWebhookSignatureInput): ParsedStripeEvent;
 }

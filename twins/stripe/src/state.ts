@@ -36,6 +36,9 @@ export type TwinAccount = {
   email: string | null;
   country: string;
   capabilities: { card_payments: 'active'; transfers: 'active' };
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
   metadata: Record<string, string>;
 };
 
@@ -90,6 +93,7 @@ export class TwinState {
   readonly paymentIntents = new Map<string, TwinPaymentIntent>();
   readonly refunds = new Map<string, TwinRefund>();
   readonly events = new Map<string, TwinEvent>();
+  readonly idempotencyKeys = new Map<string, string>();
   readonly ids = new IdAllocator();
 
   reset(): void {
@@ -100,5 +104,6 @@ export class TwinState {
     this.paymentIntents.clear();
     this.refunds.clear();
     this.events.clear();
+    this.idempotencyKeys.clear();
   }
 }

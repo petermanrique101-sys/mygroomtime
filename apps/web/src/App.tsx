@@ -11,7 +11,9 @@ import HomeRoute from './routes/home';
 import ClientsListRoute from './routes/clients/list';
 import NewClientRoute from './routes/clients/new';
 import ClientDetailRoute from './routes/clients/detail';
+import SettingsIndexRoute from './routes/settings/index-page';
 import ServicesSettingsRoute from './routes/settings/services';
+import SettingsPaymentsRoute from './routes/settings/payments';
 import CalendarRoute from './routes/calendar';
 import SignupBillingRoute from './routes/signup/billing';
 import SignupBillingSuccessRoute from './routes/signup/billing-success';
@@ -123,13 +125,25 @@ export default function App(): JSX.Element {
             />
             <Route
               path="/settings"
-              element={<Navigate to="/settings/services" replace />}
+              element={
+                <Authed>
+                  <SettingsIndexRoute />
+                </Authed>
+              }
             />
             <Route
               path="/settings/services"
               element={
                 <Authed>
                   <ServicesSettingsRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/settings/payments"
+              element={
+                <Authed>
+                  <SettingsPaymentsRoute />
                 </Authed>
               }
             />

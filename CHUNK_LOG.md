@@ -43,18 +43,71 @@ Process discipline:
 | 15 | Scheduled SMS jobs (48h, 2h, post-appt) via BullMQ | ✅ done, committed |
 | 16 | Route optimization + day route view | ✅ done, committed |
 | 16.5 | Appointment lifecycle + complete + rebook | ✅ done, committed |
-| 17 | Recurring materialization + reschedule | ✅ done |
-| **18** | **Offline support (PWA, mutation queue)** | **← next** |
-| 19 | Owner dashboard | pending |
-| 20 | Twin: Google Calendar + two-way sync (Pro+) | pending |
-| 21 | Business tier: multi-vehicle dispatch + payroll splits | pending |
-| 22 | Operator log + admin polish + production readiness | pending |
+| 17 | Recurring materialization + reschedule | ✅ done, committed |
+| 18 | Offline support (PWA, mutation queue, MutationLog) | ✅ done, committed |
+| 19 | Owner dashboard | ✅ done, committed |
+| 20 | Twin: Google Calendar + two-way sync (Pro+) | ✅ done, committed |
+| 21 | Business tier: multi-vehicle dispatch + payroll splits | ✅ done, committed |
+| **22** | **Operator log + admin polish + production readiness** | **← next (final v1 chunk), prompt in NEXT_CHUNK.md** |
+
+After chunk 22: human evaluator runs the 8 scenarios in `scenarios/` per `SCENARIO_RUBRIC.md`. All must score 8+ to declare v1 done.
 
 ---
 
 ## Cross-chunk policy decisions (not all in spec yet)
 
 These were locked in via chunk prompts. Honor them in future chunks.
+
+### Business tier dispatch + payroll + ops calendar (chunk 21)
+- **Multi-vehicle is Business-only.** Pro/Starter keep the single-vehicle day view. New `requireBusinessTier` middleware on vehicles CRUD, payroll routes, ops-calendar setup. 403 with `reason: 'business_tier_required'`.
+- **Vehicle owns its default driver.** `Vehicle.assignedGroomerId` (nullable). Appointments inherit `groomerId` from vehicle on create unless owner explicitly pins.
+- **Cross-vehicle drag = reschedule + reassignment.** Owner pin detected by PATCH-body presence: if `groomerId` is in the payload (even `null`), it's an explicit pin and we don't override. If absent AND vehicleId changed, we inherit the destination vehicle's `assignedGroomerId`. Both vehicles' routes recompute; reminders remove+add via the chunk-15 path; per-user gcal pushes fire for both old and new groomers.
+- **Phone UX: bottom sheet, not physical drag.** Dispatch view is horizontally-scrollable columns on phone; "Move to vehicle" bottom sheet picker replaces cross-column drag below ~768px. Within-column drag still works via chunk-9 mechanics. The hard 409 conflict path unchanged regardless of input affordance.
+- **Vehicle delete is service-layer blocked** (not DB-constraint): 409 `future_appointments` if any scheduled/on_the_way/started appts assigned; 409 `last_active_vehicle` if would leave 0 active. Same checks on PATCH active=false.
+- **Payroll period config**: `Tenant.payrollPeriodKind: weekly | biweekly` (default biweekly) + `payrollPeriodAnchorDate` for biweekly cycle math. Server TZ for v1 (chunk 22 adds tenant TZ).
+- **Payroll splits = sum(finalAmountCents) where status=completed AND completedAt in period AND groomerId=X.** Tips broken out separately via `tipCents`. Refunds NOT subtracted in v1 — `// TODO chunk 22: subtract refunds`.
+- **CSV export columns** (BOM-prefixed for Excel): `period_start, period_end, groomer_email, groomer_name, appointments_completed, revenue_cents, tips_cents, total_cents`. Customer PII never in the CSV — only groomer fields. Filename: `payroll-{tenant_slug}-{period_start}.csv`.
+- **Operations calendar (Business-only, optional).** `GoogleCalendarLink.linkKind` enum extends to `user | tenant_operations`. Dropped old `(userId) UNIQUE`, replaced with `(userId, linkKind)` unique. Partial unique on `(tenantId) WHERE linkKind='tenant_operations'` enforces one ops link per tenant. `userId` is nullable for tenant_operations rows.
+- **Ops calendar is write-only.** Push events for every appointment in the tenant, on top of the per-user push (dual push). No pull-side sync (keeps surface small). Disconnect removes the ops link only; per-user links unaffected.
+- **Dual-push idempotency keys differ by linkKind**: `gcal-push.{kind}.{linkKind}.{appointmentId}`. User and ops pushes never collide. BullMQ `.` separator (chunk-15 lesson). `Appointment.opsGoogleEventId` added alongside `googleEventId` so the two events can be tracked independently.
+
+### Google Calendar two-way sync (chunk 20)
+- **Per-user GoogleCalendarLink** (chunk 21 extends with `linkKind`). Each groomer connects their own Google account; appointments push to the assigned groomer's calendar via `Appointment.groomerId`. Unassigned appointments don't push.
+- **Pull-side sync is TIGHTENED**: only ingest changes to events we created (matched by `extendedProperties.private.mgtAppointmentId`). External brand-new events without our tag are IGNORED — protects against the groomer's dentist appointments becoming Appointments.
+- **Field mapping**: `summary = "{serviceNameSnapshot} — {petName}"`; `start/end.dateTime` from `scheduledStart` + `durationMin`; `description = notes + address (override or client)`; `extendedProperties.private` carries `mgtAppointmentId` + `mgtTenantId`. Status changes don't sync to Google (no equivalent); canceled = Google event deletion.
+- **Conflict resolution**: rank by `(externalUpdated, ourUpdated)` lexicographic, our-wins on tie. Always preserve from our row regardless of who wins on time/title: `depositChargeId`, `balanceChargeId`, `recurringSeriesId`, `mutationUuid`, all snapshot columns, `addressOverride*`. Google doesn't know these exist.
+- **`no_change` short-circuit** in conflict service: when Google "wins" by timestamp but start/duration/notes haven't actually drifted (irrelevant Google-side edit bumped `updated`), return `no_change` instead of an empty patch. Saves a DB write and a reminder reschedule.
+- **OAuth scope**: only `https://www.googleapis.com/auth/calendar.events` (event-level, not full calendar list / ACL). Token storage: refresh token encrypted at rest with AES-256-GCM, ciphertext prefixed `v1:` for forward-compatible rotation. Access tokens cached in Redis under `gcal-token:{userId}` with TTL `expires_in - 60s`.
+- **Token refresh race**: `SET NX PX=5000` lock at `gcal-token-lock:{userId}`; losers poll the cache key for up to 5s and pick up the winner's refreshed value. Lock holder crash falls through to a fresh refresh after the TTL. No thundering herd.
+- **Watch channel renewal**: daily cron `0 3 * * *` refreshes any link with `watchExpirationAt < now+48h`. After 3 consecutive renew failures, set `needsReauth=true`; user sees "Reconnect" CTA. Channel-token (`X-Goog-Channel-Token`) is the per-link secret used at webhook verify time.
+- **Tier gate**: Pro+ only. Backend returns 403 with `reason: 'tier_gated'` for Starter/unpaid/past_due/canceled.
+- **Encryption key**: `GCAL_TOKEN_ENCRYPTION_KEY` (32-byte base64). Dev fallback is a deterministic 32-byte string so `pnpm dev` works; production MUST set the env var — no fallback there.
+- **Soft-deleting a client doesn't fire any gcal-push.** Soft-delete is just a flag on the client; the underlying appointments are still scheduled in our DB and in Google. If the appointment is later canceled or deleted, the existing push path tears the Google event down. Consistent with chunk 6 policy.
+
+### Owner dashboard (chunk 19)
+- **All metrics server-side over server-side timestamps.** `completedAt`, `startedAt`, `finalAmountCents`, `tipCents`. Never trust client clocks.
+- **Duration metric** = `completedAt - startedAt` (actual service time). Documented offline-replay skew (chunk 18 surfaces this — the server-side `completedAt` is set when the replay lands, not when the user tapped Complete). Acceptable for v1.
+- **Tenant timezone = server UTC for v1**, TODO marker for chunk 22 to add per-tenant TZ. Affects revenue-by-day boundaries.
+- **Revenue widget = sum(finalAmountCents) where status='completed' in window.** Tips already included. Refunds NOT subtracted in v1 — `// TODO chunk 22: subtract refunds`. Chunk 22 surfaces gross + net.
+- **No-show rate (last 30d)** = `count(no_show) / count(completed + no_show)` over completedAt OR noShowAt in window. Incomplete statuses (scheduled, started, etc.) excluded.
+- **Top clients (last 90d)** = sum(finalAmountCents) per clientId, desc, limit 5. Soft-deleted clients tagged "(removed)" but still appear (they had real revenue).
+- **Gaps to fill (next 7d)** = active `RecurringSeries` where last completed parent is overdue by >1 week past `intervalWeeks`. Surfaces "{petName} ({clientName}) — last groomed N days ago, normally every X weeks." Series with no completed parent yet are skipped.
+- **Single API call, parallel fan-out, per-widget error containment.** `GET /dashboard` runs all 5 services in `Promise.all`; one widget failing returns `{ ...metric, error: 'unavailable' }` so the dashboard never black-screens.
+- **Drill-down endpoints separate**: `/dashboard/revenue`, `/no-shows`, `/top-clients`, `/gaps-to-fill` — each paginated. Each widget tappable → drill-down route.
+- **All paid plans get dashboard.** Starter's gaps-to-fill widget returns `{ items: [], gated: true, reason: 'recurring_requires_pro' }` (200, not 403) so the widget renders the upgrade copy in-place.
+- **Hand-rolled SVG line chart** for revenue drill-down. No new chart-lib dep. Chunk 22 may extend with refund deltas.
+
+### Offline support + MutationLog (chunk 18)
+- **Generic `MutationLog` table is the dedup truth** for owner-side writes. Header `X-Mutation-Id` (client-generated UUIDv7) is required on every owner mutation route. Lookup-by-id short-circuits with the captured `resultPayloadJson` if processed before. The chunk-2 `Appointment.mutationUuid @unique` stays as a layered fallback (defends against the race between handler success and the `onResponse` MutationLog persist hook).
+- **Public/jti-protected endpoints DON'T use MutationLog.** Public reschedule commit (jti single-use), public booking submit (Stripe idempotency-key + BookingPageRequest unique), webhook handlers (WebhookEvent unique) all already have their own idempotency. Don't double-layer.
+- **Replay order = client-creation order**, NOT server-receive order. UUIDv7 is sortable. Replay is serialized per (tenantId, resourceId) so cause-and-effect is preserved across concurrent reconnects.
+- **Stripe idempotency key under replay** = `mut-{mutationUuid}` when MutationLog is in play, else falls back to the resource-specific key (`complete-{appointmentId}` etc). Helper: `stripe-idempotency.ts`. Complete-flow under offline replay: exactly one PI per Complete, never double-charges across the offline boundary.
+- **Conflict resolution policy = server wins, surface the diff.** Failed replays land in a "needs attention" panel with captured intent + current server state. V1 ships discard-only; retry-with-edit is v2.
+- **Cached read surface (PWA cache)** = today's appointments + today's buffers + Pets/Clients referenced + Service catalog + Tenant profile. NOT the whole month — day view is the offline target. Other views show offline empty-state. Stale time 5 min while online, forced refresh on reconnect.
+- **Background Sync API where available** (Chrome/Edge); silent `try/catch` fallback to `window.online` event handler everywhere else (Safari iOS, Firefox).
+- **Offline banner** = top, neutral color, "Offline — N changes queued" / "Syncing — N left" / "All caught up" (fades). No red, no alarms.
+- **Retry policy**: exponential backoff up to 5 attempts on 5xx/network. 4xx → straight to conflict panel (no retry).
+- **MutationLog 90-day retention** documented; sweep job deferred to chunk 22.
 
 ### Recurring materialization + customer reschedule (chunk 17)
 - **Materialization horizon = 14 days.** Nightly BullMQ repeat (`recurring-materialize` queue, cron `0 2 * * *`) walks `RecurringSeries` where `active AND nextDueDate <= now+14d AND (nextMaterializationAttemptAt IS NULL OR <= now)`. The walker (`materializeAllDueSeries`) iterates and calls `materializeOneSeries({seriesId,tenantId})` per row. Per-series throws are caught so a single bad row never aborts the walk.
@@ -205,6 +258,51 @@ Tenants don't get a Vehicle on signup. `ensureDefaultVehicle(tenantId)` lazy-cre
 
 ## Chunk recaps (essentials)
 
+### Chunk 21 — Business tier dispatch + payroll + ops calendar
+- Shipped as ONE chunk. Schema delta was small (3 enums/columns) and the ops calendar plugged cleanly into the chunk-20 linkKind discriminator pattern.
+- Schema: `Vehicle.assignedGroomerId/active/deletedAt`, `Tenant.payrollPeriodKind/Anchor`, `GoogleCalendarLink.linkKind` enum + composite `(userId, linkKind)` unique + partial unique on `tenantId WHERE linkKind='tenant_operations'`, `Appointment.opsGoogleEventId`, two new enums, dispatch + payroll indexes. Migration `20260529000000_business_tier_dispatch_and_payroll`.
+- API: `middleware/require-business-tier.ts`; `routes/vehicles/` (CRUD); `routes/payroll/` (periods + splits + CSV); `routes/settings/integrations/google-calendar-operations/` (status + connect + disconnect); cross-vehicle drag test `appointments-dispatch.test.ts`.
+- Services: `payroll-periods.ts`, `payroll-splits.ts`, `payroll-csv.ts` (+ tests).
+- Web: `routes/settings/vehicles.tsx`, `routes/payroll/`, `routes/calendar/dispatch-view.tsx` + `mode-toggle.tsx`, `routes/settings/integrations/google-calendar-operations.tsx`. API clients: `vehicles-api.ts`, `payroll-api.ts`.
+- Push worker dispatch by linkKind (existing chunk-20 worker, default `'user'` for back-compat). `gcal-enqueue` fans out to both user + ops links. JobIds: `gcal-push.{kind}.{linkKind}.{appointmentId}`.
+- Vehicle delete-blocking is service-layer (not DB constraint): `future_appointments` and `last_active_vehicle` checks live in `delete.ts` and the PATCH active=false handler.
+- Payroll CSV: BOM-prefixed, tested for groomer-name commas, doubled inner quotes, newlines. Byte-for-byte assertion.
+- Phone UX call: bottom sheet "Move to vehicle" instead of physical cross-column drag. 220px min-width columns with `snap-x snap-mandatory` horizontal scroll. Within-column drag preserved via chunk-9 DayGrid.
+- Tests: 377 api / 103 web. `calendar/index.tsx` was 434 LOC, split into `mode-toggle.tsx` to fit ≤400.
+
+### Chunk 20 — Google Calendar twin + adapter + two-way sync (Pro+)
+- Shipped as ONE chunk.
+- Twin (`twins/google-calendar/`): `app.ts`, `state.ts`, `auth.ts`, `events.ts`, `server.ts`, plus `routes/{oauth, calendar-list, events, watch, admin}.ts`. 10/10 tests green.
+- Adapter (`apps/api/src/adapters/gcal/`): types (extended), `parse.ts`, `http.ts`, `impl.ts` (shared logic), `live.ts` (real Google URLs + `buildLiveAuthorizeUrl`), `twin.ts` (twin URLs + `buildTwinAuthorizeUrl`). Tests: rewritten `gcal.test.ts`, `gcal.integration.test.ts`, `gcal-e2e.integration.test.ts`.
+- Schema migrations: `20260528000000_google_calendar_link` (table + ALTER TYPE WebhookSource ADD VALUE 'google_calendar') and `20260528010000_appointment_google_event_id`.
+- Queues: `gcal-connection.ts` (3 queues — push, pull, renew), `gcal-push-worker.ts`, `gcal-pull-worker.ts`, `gcal-renew-worker.ts`, `gcal-infra.ts` (factory split out of `app.ts` to keep it under 400 LOC).
+- Services: `token-encrypt.ts` (AES-256-GCM, `v1:` prefix), `gcal-conflict.ts` (9-case test), `gcal-payload.ts`, `gcal-enqueue.ts`, `gcal-token-cache.ts` (Redis lock + poll-the-cache), `gcal-oauth-state.ts`.
+- Routes: `routes/settings/integrations/google-calendar/{status, connect, callback, disconnect, index}.ts`, `routes/webhooks/google-calendar.ts`, `middleware/require-pro-tier.ts`. Push enqueue wired into every appointment-mutating route.
+- Web: `lib/gcal-api.ts`, `routes/settings/integrations/google-calendar.tsx`.
+- Encryption fallback in dev (deterministic 32-byte key); hard fail in prod when env unset.
+- 357 api / 98 web / 10 gcal-twin tests. 0 unannotated skips. Reminder tests stable.
+
+### Chunk 19 — Owner dashboard
+- Services (`apps/api/src/services/dashboard/`): `revenue.ts`, `no-show-rate.ts`, `top-clients.ts`, `gaps-to-fill.ts`, `duration.ts`, `windows.ts`, `index.ts` (parallel fan-out + per-widget error containment).
+- Routes (`apps/api/src/routes/dashboard/`): `summary.ts` (Cache-Control private max-age=30), `revenue.ts`, `no-shows.ts`, `top-clients.ts`, `gaps-to-fill.ts`, `index.ts`. All requireAuth + requirePaidPlan. Starter's gaps-to-fill returns gated payload (200), not 403.
+- Shared: `packages/shared/src/dashboard.ts` (Zod schemas + types per payload).
+- Web: 6 widgets (revenue, no-show, duration, top-clients, gaps, today-route) + 4 drill-downs. Hand-rolled SVG line chart for revenue (no new deps). Per-widget AND whole-page empty-state strategy.
+- Indexes: none added — `Appointment(tenantId, completedAt)` + `RecurringSeries(tenantId, active, nextDueDate)` already covered.
+- Default landing route: kept `/` → `/calendar` (spec flow 3 — day-of working tool). Dashboard one tap from calendar header.
+- Performance: getDashboardSummary measured <200ms with 1000 completed appointments (target was <500ms p95).
+- Tests: +16 service, +9 route, +14 web. 319/319 api at recap time.
+
+### Chunk 18 — Offline support (PWA, mutation queue, MutationLog)
+- Schema: `MutationLog` table (id PK = client UUIDv7, tenantId, userId, endpoint, resourceType, resourceId, status enum, failureReason, resultPayloadJson JSONB, createdAt). Migration `20260527000000_mutation_log`.
+- API middleware: `mutation-dedupe.ts` (header read, lookup + short-circuit on processed, capture + persist hooks via `onSend` + `onResponse`).
+- Service: `stripe-idempotency.ts` (mut-{uuid} ⇆ resource-key fallback). `complete-appointment.ts` takes mutation context and routes the idempotency key through the helper.
+- Applied to every owner-side write: appointments {create, update, delete, status, complete, rebook, route-apply}, recurring-series {pause, resume}, clients/services CRUD. NOT applied to /me, /auth/*, /billing*, /webhooks/*, public/* (those have their own idempotency).
+- Web: `uuid-v7.ts`, `offline-queue.ts` (idb, v1 schema), `offline-bus.ts`, `offline-api.ts`, `offline-replay.ts`, `sw-bridge.ts`, `use-offline-queue.ts`, `use-last-synced.ts`. Components: `offline-banner.tsx`, `queued-mutations-modal.tsx`.
+- PWA: `vite-plugin-pwa` injectManifest. Custom service worker at `src/sw.ts` with NetworkFirst runtime cache for today's read surface + Background Sync registration.
+- Background Sync: Chrome/Edge get the API; Safari iOS + Firefox fall back to `window.online` via silent try/catch.
+- Tests: `offline-queue.test.ts` (7), `offline-api.test.ts` (4), `offline-replay.test.ts` (4), `offline-banner.test.tsx` (4), `offline-integration.test.ts` (2 — lifecycle replay + 4xx conflict). `mutation-dedupe.test.ts` (6).
+- Verified: replay returns original payload; failed-replay returns original 4xx; missing header on write → 400; GET not enforced; Complete under replay → exactly one Stripe PI; cross-tenant rejected.
+
 ### Chunk 1 — scaffold
 - Monorepo: `pnpm-workspace.yaml` covering `apps/*`, `packages/*`, `twins/*` (workspace added in chunk 5).
 - `apps/web` (Vite+React+TS+Tailwind), `apps/api` (Fastify+TS), `packages/db` (Prisma init, throwaway Health model removed in chunk 2), `packages/shared` (Zod).
@@ -350,17 +448,20 @@ Tenants don't get a Vehicle on signup. `ensureDefaultVehicle(tenantId)` lazy-cre
 ## Open caveats / known minor issues
 
 - **Drag snap stutter** (chunk 9): defer until real-phone user complaints. Fix path: render unsnapped ghost separately from the snapped commit position.
-- **Confirmation SMS** doesn't fire yet (twilio twin+adapter come in chunk 14). Chunk 12 left a `// chunk 14: enqueue SMS confirmation` marker in `payment-intent-succeeded.ts`.
-- **Twin Stripe.js stub** (chunk 12): real `loadStripe()` is hardcoded to js.stripe.com and can't reach the local twin. The web detects `pk_twin_` keys and renders a stub Payment Element that hits `/public/:slug/bookings/:id/twin-confirm`. The route 404s in live mode. Not a problem for the chunk-12 dev loop but worth knowing if someone wires Apple Pay / Google Pay buttons (chunk 12 OOS) and expects them to work against the twin.
+- **Twin Stripe.js stub** (chunk 12): real `loadStripe()` is hardcoded to js.stripe.com and can't reach the local twin. The web detects `pk_twin_` keys and renders a stub Payment Element that hits `/public/:slug/bookings/:id/twin-confirm`. The route 404s in live mode. Not a problem for dev but worth knowing if someone wires Apple Pay / Google Pay buttons (OOS v1) and expects them to work against the twin.
 - **`confirmTwinPaymentIntent` on the adapter interface** (chunk 12): live mode throws on call. Kept on the interface for type unity. Only used by the twin-confirm route.
-- **Manage-booking UI for customers** (chunk 12): `/public/booked/:requestId` links to `/public/manage/...` which renders a "coming soon" page. Chunk 17 (recurring + reschedule) implements the real signed-token UI.
-- **API tests require Docker** for Postgres on port 5433. `pnpm db:migrate` won't run without it. WSL2 + Docker Desktop on Windows; native Docker elsewhere. Web + twin tests are DB-free and run regardless.
-- **`apps/web/src/routes/calendar/calendar.test.tsx`** is 405 LOC, 5 over the constitution's 400-LOC rule. Pre-dates chunk 12; landed in chunk 9. Defer to a discrete cleanup chunk when other 400-LOC creep accumulates.
-- **`vitest fileParallelism: false`** for `apps/api` (chunk 12): API tests share a Postgres + signup-by-timestamp pattern. The chunk-12 test split exposed the race. Suite is 35s serial; if it grows past ~90s, fix the shared-state pattern (per-test schema or tenant-namespaced webhook prefixes) and re-enable parallelism.
+- **API tests require Docker** for Postgres on port 5433. `pnpm db:migrate` won't run without it. Web + twin tests are DB-free and run regardless.
+- **`apps/web/src/routes/calendar/calendar.test.tsx`** is 405 LOC, 5 over the constitution's 400-LOC rule. Pre-dates chunk 12. Defer to a discrete cleanup chunk when other 400-LOC creep accumulates.
+- **`vitest fileParallelism: false`** for `apps/api` (chunk 12): API tests share Postgres + signup-by-timestamp. Suite ~35s serial; if it grows past ~90s, fix the shared-state pattern and re-enable parallelism.
 - **Tenant business hours hardcoded** Mon-Sat 8am-5pm in availability service. Tenant-configurable hours land in chunk 22.
+- **Tenant TZ deferred to chunk 22.** Dashboard windows + payroll period boundaries currently run in server TZ. Multiple `// TODO chunk 22: tenant TZ` markers.
+- **Refund tracking deferred to chunk 22.** Dashboard revenue + payroll splits do NOT subtract refunds yet. Markers in place.
 - **Geocode twin coverage**: Plano/McKinney/Frisco only. Extend the zip-centroid table as scenarios demand.
 - **Orphan-tenant sweep** (unpaid Tenants from abandoned signup) defers to chunk 22.
-- **Operator log UI** for failed jobs / dead-lettered webhooks defers to chunk 22.
+- **MutationLog 90-day retention sweep** defers to chunk 22.
+- **Operator log UI** for failed jobs / dead-lettered webhooks / failed Stripe balance captures / `needsReauth` GoogleCalendarLinks / system-paused RecurringSeries / geocode failures — chunk 22 is when this lands.
+- **Sentry not yet wired** (web + api). Chunk 22.
+- **Customer-facing `/public/manage/:token` "Coming soon"** — chunk 17 added the real signed-token UX at `/public/reschedule/:token` for recurring reminders. The chunk-12 public booking confirmation page still links to the legacy `/public/manage/...` route which is unused. Either rewire that link to the reschedule flow or remove it — chunk 22 polish.
 
 ---
 
@@ -380,6 +481,9 @@ These landed as discrete edits between chunks. Listed so future debugging doesn'
 | chunk 10 → 11 | 3 lint errors in chunk 10 files fixed post-recap (`app.ts` import type, `form-body.ts` unused var, `app.test.ts` any-typing) |
 | chunk 12 → 13 | Stale chunk-10 guard test removed (`stripe.test.ts` asserting live Connect throws "not implemented"); `submit.test.ts` palette-color fix (`#000000` → `#6b7280`); `submit.test.ts` split into 3 files for 400-LOC; `apps/api/vitest.config.ts` `fileParallelism: false` after the split |
 | chunk 13 → 14 | `conflict.test.ts` time-of-day flake fixed: `plus()` anchored to next-non-Sunday 10am so future-time offsets don't cross midnight (was failing in evenings); "past" test switched to a literal `Date.now() - 60min` |
+| chunk 16 → 17 | chunks 17/18/19 were claimed-but-uncommitted on arrival; reconstructed as the `chunks 17 to 19` bundled commit. Discipline lesson: verify recap commits with `git log` before greenlighting next chunk. |
+| chunk 19 → 20 | Queue-name isolation for tests: `createReminderQueue` / `createReminderWorker` now take an optional `queueName`; `makeTestReminderInfra` generates `sms-reminders-test-{pid}-{random}` per call. Without this, a long-running `pnpm dev` worker holds `BZPOPMIN` on `sms-reminders` and grabs test jobs first → 4 flaky reminder-worker timeouts. After fix: 5/5 pass in 1.3s. |
+| chunk 20 → 21 | Chunk 20 was uncommitted on arrival despite recap claim; committed as `98450d1` before chunk 21 started. Same pattern as the chunks-17-to-19 lesson. |
 
 ---
 

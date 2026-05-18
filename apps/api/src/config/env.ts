@@ -23,6 +23,9 @@ export type GcalEnv = {
   oauthClientId: string;
   oauthClientSecret: string;
   twinUrl: string;
+  oauthRedirectUri: string;
+  webhookUrl: string;
+  tokenEncryptionKey: string;
 };
 
 export type GmapsEnv = {
@@ -102,6 +105,14 @@ export function loadEnv(): AppEnv {
       oauthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID ?? '',
       oauthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
       twinUrl: process.env.GCAL_TWIN_URL ?? 'http://localhost:4244',
+      oauthRedirectUri:
+        process.env.GOOGLE_OAUTH_REDIRECT_URI ??
+        'http://localhost:3000/settings/integrations/google-calendar/callback',
+      webhookUrl:
+        process.env.GCAL_WEBHOOK_URL ?? 'http://localhost:3000/webhooks/google-calendar',
+      tokenEncryptionKey:
+        process.env.GCAL_TOKEN_ENCRYPTION_KEY ??
+        (isProd ? '' : 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc='),
     },
     gmaps: {
       mode: pickMode('GMAPS_MODE', defaultMode),

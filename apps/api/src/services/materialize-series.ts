@@ -13,7 +13,9 @@ import { canPlaceAppointment } from './conflict.js';
 import { resolveAppointmentCoords } from './address.js';
 import { loadTenantDefaultBufferMin } from './buffers.js';
 import { enqueueAppointmentReminders } from './reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from './gcal-enqueue.js';
 import type { ReminderQueue } from '../queue/connection.js';
+import type { GcalPushQueue } from '../queue/gcal-connection.js';
 
 export type MaterializeOutcome =
   | { status: 'materialized'; appointmentId: string; seriesId: string }
@@ -32,6 +34,7 @@ export const MAX_CONSECUTIVE_FAILED_MATERIALIZATIONS = 7;
 export type MaterializeDeps = {
   gmaps: GmapsAdapter;
   reminderQueue: ReminderQueue | null;
+  gcalPushQueue: GcalPushQueue | null;
   log: { info: (o: object, msg: string) => void; warn: (o: object, msg: string) => void };
 };
 
@@ -296,6 +299,13 @@ export async function materializeOneSeries(
       );
     }
   }
+
+  await enqueueGcalPushIfLinked({
+    queue: input.deps.gcalPushQueue,
+    tenantId: input.tenantId,
+    appointmentId: appointment.id,
+    kind: 'create',
+  });
 
   input.deps.log.info(
     { seriesId: series.id, appointmentId: appointment.id, scheduledStart: appointment.scheduledStart.toISOString() },

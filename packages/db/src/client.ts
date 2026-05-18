@@ -5,6 +5,7 @@ import type {
   ScopedAppointment,
   ScopedBookingPageRequest,
   ScopedClient,
+  ScopedGoogleCalendarLink,
   ScopedMutationLog,
   ScopedPet,
   ScopedRecurringSeries,
@@ -40,6 +41,10 @@ export interface GlobalDb {
   // as recurringSeries above. Application code should not bypass this either —
   // db.forTenant(tenantId).mutationLog is the tenant-scoped surface.
   mutationLog: PrismaClient['mutationLog'];
+  // why: chunk-20 Google Calendar inbound webhook arrives with X-Goog-Channel-Id only — we
+  // resolve the link → user → tenant before any further DB touch. Same legitimate cross-
+  // tenant access pattern. Application code goes through db.forTenant(...).googleCalendarLink.
+  googleCalendarLink: PrismaClient['googleCalendarLink'];
   $transaction: PrismaClient['$transaction'];
   $disconnect: PrismaClient['$disconnect'];
 }
@@ -50,6 +55,7 @@ const globalDb: GlobalDb = {
   tenantPlanChange: prisma.tenantPlanChange,
   recurringSeries: prisma.recurringSeries,
   mutationLog: prisma.mutationLog,
+  googleCalendarLink: prisma.googleCalendarLink,
   $transaction: prisma.$transaction.bind(prisma),
   $disconnect: prisma.$disconnect.bind(prisma),
 };
@@ -93,6 +99,10 @@ function forTenant(tenantId: string): TenantScopedDb {
       asDelegate(prisma.mutationLog),
       tenantId,
     ) as unknown as ScopedMutationLog,
+    googleCalendarLink: scopeDelegate(
+      asDelegate(prisma.googleCalendarLink),
+      tenantId,
+    ) as unknown as ScopedGoogleCalendarLink,
   };
 }
 

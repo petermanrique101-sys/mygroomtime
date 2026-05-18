@@ -8,6 +8,7 @@ import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
 import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { serializeAppointment } from './serialize.js';
 import { rebookFromAppointment } from '../../services/rebook-appointment.js';
+import { enqueueGcalPushIfLinked } from '../../services/gcal-enqueue.js';
 
 type Params = { id: string };
 
@@ -61,6 +62,13 @@ export default async function appointmentRebookRoute(app: FastifyInstance): Prom
         reply.code(500).send({ error: 'internal', message: 'Unhandled rebook outcome.' });
         return;
       }
+
+      await enqueueGcalPushIfLinked({
+        queue: app.gcalPushQueue,
+        tenantId: auth.tenant.id,
+        appointmentId: outcome.nextAppointment.id,
+        kind: 'create',
+      });
 
       const body: AppointmentRebookResponse = {
         recurringSeries: {

@@ -18,6 +18,7 @@ import {
   enqueueAppointmentReminders,
   removeAppointmentReminders,
 } from '../../services/reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from '../../services/gcal-enqueue.js';
 import { serializeAppointment } from '../appointments/serialize.js';
 import { findActiveAppointment } from '../appointments/find.js';
 import { publicRateLimitConfig } from './rate-limit.js';
@@ -191,6 +192,22 @@ export default async function publicRescheduleCommitRoute(
           tenantSms?.smsRemindersEnabled === true,
         );
       }
+
+      // why: source goes to cancelled (Google event teardown) AND a new appointment is
+      // created (Google event insert). The new appointment carries the same groomerId so
+      // the same calendar gets the new event.
+      await enqueueGcalPushIfLinked({
+        queue: app.gcalPushQueue,
+        tenantId: tenant.id,
+        appointmentId: source.id,
+        kind: 'delete',
+      });
+      await enqueueGcalPushIfLinked({
+        queue: app.gcalPushQueue,
+        tenantId: tenant.id,
+        appointmentId: created.id,
+        kind: 'create',
+      });
 
       const hydrated = await findActiveAppointment(scoped, created.id);
       if (!hydrated) {

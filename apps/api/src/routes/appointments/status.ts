@@ -15,6 +15,7 @@ import {
   TransitionError,
 } from '../../services/status-transitions.js';
 import { removeAppointmentReminders } from '../../services/reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from '../../services/gcal-enqueue.js';
 import { toDialFormat } from '../../services/phone.js';
 import { centsToDollarsString } from '../../services/format-money.js';
 
@@ -165,6 +166,19 @@ export default async function appointmentStatusRoutes(app: FastifyInstance): Pro
         reply.code(500).send({ error: 'internal', message: 'Could not reload appointment.' });
         return;
       }
+
+      // why: canceled/no_show → tear the event down in Google (cancellation policy).
+      // Other transitions (on_the_way, started) don't have a meaningful Google equivalent;
+      // we still push as update so the description carries the latest status notes if any.
+      const gcalKind: 'update' | 'delete' =
+        target === 'canceled' || target === 'no_show' ? 'delete' : 'update';
+      await enqueueGcalPushIfLinked({
+        queue: app.gcalPushQueue,
+        tenantId: auth.tenant.id,
+        appointmentId: hydrated.id,
+        kind: gcalKind,
+      });
+
       const body: AppointmentMutationResponse = {
         appointment: serializeAppointment(hydrated, hydrated.pet, hydrated.client),
         warning: null,

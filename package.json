@@ -28,7 +28,8 @@
     "twin:gmaps": "pnpm --filter @mygroomtime/twin-google-maps dev",
     "twin:geocode": "pnpm --filter @mygroomtime/twin-geocode dev",
     "twin:stripe": "pnpm --filter @mygroomtime/twin-stripe dev",
-    "twin:twilio": "pnpm --filter @mygroomtime/twin-twilio dev"
+    "twin:twilio": "pnpm --filter @mygroomtime/twin-twilio dev",
+    "twin:gcal": "pnpm --filter @mygroomtime/twin-google-calendar dev"
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",

@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@mygroomtime/twin-geocode": "workspace:*",
+    "@mygroomtime/twin-google-calendar": "workspace:*",
     "@mygroomtime/twin-google-maps": "workspace:*",
     "@mygroomtime/twin-stripe": "workspace:*",
     "@mygroomtime/twin-twilio": "workspace:*",

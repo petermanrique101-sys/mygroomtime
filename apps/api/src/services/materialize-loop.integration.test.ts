@@ -100,6 +100,7 @@ describe('chunk-17 end-to-end loop', () => {
       deps: {
         gmaps: app.adapters.gmaps,
         reminderQueue: null,
+        gcalPushQueue: null,
         log: { info: () => undefined, warn: () => undefined },
       },
     });

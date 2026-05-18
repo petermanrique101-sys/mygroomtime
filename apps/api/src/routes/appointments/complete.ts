@@ -11,6 +11,7 @@ import { findActiveAppointment } from './find.js';
 import { serializeAppointment } from './serialize.js';
 import { completeAppointment } from '../../services/complete-appointment.js';
 import { removeAppointmentReminders } from '../../services/reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from '../../services/gcal-enqueue.js';
 
 type Params = { id: string };
 
@@ -59,6 +60,14 @@ export default async function appointmentCompleteRoute(app: FastifyInstance): Pr
         return;
       }
 
+      if (!outcome.alreadyCompleted) {
+        await enqueueGcalPushIfLinked({
+          queue: app.gcalPushQueue,
+          tenantId: auth.tenant.id,
+          appointmentId: outcome.appointment.id,
+          kind: 'update',
+        });
+      }
       if (!outcome.alreadyCompleted && app.reminderQueue) {
         // why: completed appts shouldn't get the 48h/2h reminder jobs anymore. Post-appt
         // job is still useful (it's the review SMS), but the worker's defense-in-depth

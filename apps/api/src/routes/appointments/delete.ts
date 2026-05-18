@@ -5,6 +5,7 @@ import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
 import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { findActiveAppointment } from './find.js';
 import { removeAppointmentReminders } from '../../services/reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from '../../services/gcal-enqueue.js';
 
 type Params = { id: string };
 
@@ -42,6 +43,12 @@ export default async function deleteAppointmentRoute(app: FastifyInstance): Prom
       if (app.reminderQueue) {
         await removeAppointmentReminders(app.reminderQueue, existing.id);
       }
+      await enqueueGcalPushIfLinked({
+        queue: app.gcalPushQueue,
+        tenantId: auth.tenant.id,
+        appointmentId: existing.id,
+        kind: 'delete',
+      });
       reply.code(204).send();
     },
   );

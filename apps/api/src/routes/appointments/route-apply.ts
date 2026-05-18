@@ -8,6 +8,7 @@ import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
 import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { rescheduleAppointmentReminders } from '../../services/reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from '../../services/gcal-enqueue.js';
 
 const ACTIVE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.scheduled,
@@ -202,6 +203,15 @@ export default async function routeApplyRoute(app: FastifyInstance): Promise<voi
             enabled,
           );
         }
+      }
+
+      for (const id of outcome.appliedIds) {
+        await enqueueGcalPushIfLinked({
+          queue: app.gcalPushQueue,
+          tenantId,
+          appointmentId: id,
+          kind: 'update',
+        });
       }
 
       const body: RouteApplyResponse = {

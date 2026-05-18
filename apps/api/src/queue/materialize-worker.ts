@@ -4,12 +4,14 @@ import type { GmapsAdapter } from '../adapters/gmaps/index.js';
 import type { MaterializeDeps } from '../services/materialize-series.js';
 import { materializeAllDueSeries } from '../services/materialize-series-walk.js';
 import type { ReminderQueue } from './connection.js';
+import type { GcalPushQueue } from './gcal-connection.js';
 import type { MaterializeHandler } from './materialize-connection.js';
 import type { MaterializeJobData, MaterializeJobName } from './queue-names.js';
 
 export type MaterializeWorkerDeps = {
   gmaps: GmapsAdapter;
   reminderQueue: ReminderQueue | null;
+  gcalPushQueue: GcalPushQueue | null;
   log: Pick<FastifyBaseLogger, 'info' | 'warn' | 'error'>;
 };
 
@@ -24,6 +26,7 @@ export function createMaterializeHandler(deps: MaterializeWorkerDeps): Materiali
     const materializeDeps: MaterializeDeps = {
       gmaps: deps.gmaps,
       reminderQueue: deps.reminderQueue,
+      gcalPushQueue: deps.gcalPushQueue,
       log: deps.log,
     };
     const outcomes = await materializeAllDueSeries(materializeDeps, new Date());

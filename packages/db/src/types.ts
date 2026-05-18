@@ -10,6 +10,7 @@ import type {
   SmsMessage,
   User,
   MutationLog,
+  GoogleCalendarLink,
 } from '@prisma/client';
 
 type StripTenant<T> = Omit<T, 'tenantId' | 'tenant'>;
@@ -230,6 +231,24 @@ export type ScopedMutationLog = ScopedFind<
     Prisma.MutationLogDeleteManyArgs
   >;
 
+export type ScopedGoogleCalendarLink = ScopedFind<
+  GoogleCalendarLink,
+  Prisma.GoogleCalendarLinkFindManyArgs,
+  Prisma.GoogleCalendarLinkFindFirstArgs,
+  Prisma.GoogleCalendarLinkCountArgs
+> &
+  ScopedWrite<
+    GoogleCalendarLink,
+    Prisma.GoogleCalendarLinkCreateArgs,
+    Prisma.GoogleCalendarLinkCreateManyArgs,
+    Prisma.GoogleCalendarLinkUncheckedCreateInput,
+    Prisma.GoogleCalendarLinkCreateManyInput,
+    Prisma.GoogleCalendarLinkUpdateArgs,
+    Prisma.GoogleCalendarLinkUpdateManyArgs,
+    Prisma.GoogleCalendarLinkDeleteArgs,
+    Prisma.GoogleCalendarLinkDeleteManyArgs
+  >;
+
 export interface TenantScopedDb {
   readonly tenantId: string;
   client: ScopedClient;
@@ -242,4 +261,5 @@ export interface TenantScopedDb {
   smsMessage: ScopedSmsMessage;
   user: ScopedUser;
   mutationLog: ScopedMutationLog;
+  googleCalendarLink: ScopedGoogleCalendarLink;
 }

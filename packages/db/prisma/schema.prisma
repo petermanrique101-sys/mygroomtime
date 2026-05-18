@@ -56,6 +56,7 @@ enum SmsStatus {
 enum WebhookSource {
   stripe
   twilio
+  google_calendar
 }
 
 enum WebhookProcessingStatus {
@@ -116,6 +117,7 @@ model Tenant {
   smsMessages         SmsMessage[]
   planChanges         TenantPlanChange[]
   mutationLogs        MutationLog[]
+  googleCalendarLinks GoogleCalendarLink[]
 }
 
 model TenantPlanChange {
@@ -149,6 +151,7 @@ model User {
   appointments      Appointment[] @relation("AppointmentGroomer")
   preferredByClients Client[]     @relation("ClientPreferredGroomer")
   mutationLogs      MutationLog[]
+  googleCalendarLink GoogleCalendarLink?
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -282,6 +285,7 @@ model Appointment {
   notes             String            @default("")
   mutationUuid      String?           @unique
   rescheduledFromAppointmentId String?
+  googleEventId     String?
   canceledAt        DateTime?
   onTheWayAt        DateTime?
   startedAt         DateTime?
@@ -304,6 +308,7 @@ model Appointment {
   @@index([tenantId, status, scheduledStart])
   @@index([tenantId, completedAt])
   @@index([rescheduledFromAppointmentId])
+  @@index([googleEventId])
 }
 
 model RecurringSeries {
@@ -409,6 +414,32 @@ model WebhookEvent {
 
   @@unique([source, eventId])
   @@index([status])
+}
+
+model GoogleCalendarLink {
+  id                      String   @id @default(cuid())
+  tenantId                String
+  userId                  String   @unique
+  googleUserId            String
+  googleEmail             String?
+  googleCalendarId        String   @default("primary")
+  encryptedRefreshToken   String
+  watchChannelId          String?  @unique
+  watchResourceId         String?
+  watchChannelToken       String?
+  watchExpirationAt       DateTime?
+  lastSyncToken           String?
+  lastSyncedAt            DateTime?
+  needsReauth             Boolean  @default(false)
+  consecutiveRenewFailures Int     @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([watchExpirationAt])
 }
 
 model MutationLog {

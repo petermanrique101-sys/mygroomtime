@@ -72,6 +72,9 @@ importers:
       '@mygroomtime/twin-geocode':
         specifier: workspace:*
         version: link:../../twins/geocode
+      '@mygroomtime/twin-google-calendar':
+        specifier: workspace:*
+        version: link:../../twins/google-calendar
       '@mygroomtime/twin-google-maps':
         specifier: workspace:*
         version: link:../../twins/google-maps
@@ -215,6 +218,25 @@ importers:
         version: 5.9.3
 
   twins/geocode:
+    dependencies:
+      fastify:
+        specifier: ^5.1.0
+        version: 5.8.5
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.5
+        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(terser@5.47.1)
+
+  twins/google-calendar:
     dependencies:
       fastify:
         specifier: ^5.1.0

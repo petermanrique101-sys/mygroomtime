@@ -27,6 +27,11 @@ import {
 import { createMaterializeHandler } from './queue/materialize-worker.js';
 import { MATERIALIZE_JOB_NAME } from './queue/queue-names.js';
 import {
+  buildGcalInfra,
+  closeGcalInfraInline,
+  type GcalInfra,
+} from './queue/gcal-infra.js';
+import {
   captureMutationPayload,
   persistMutationLog,
 } from './middleware/mutation-dedupe.js';
@@ -40,6 +45,7 @@ import publicRoutes from './routes/public/index.js';
 import settingsRoutes from './routes/settings/index.js';
 import stripeWebhookRoute from './routes/webhooks/stripe/index.js';
 import twilioWebhookRoute from './routes/webhooks/twilio/index.js';
+import gcalWebhookRoute from './routes/webhooks/google-calendar.js';
 import recurringSeriesRoutes from './routes/recurring-series/index.js';
 import dashboardRoutes from './routes/dashboard/index.js';
 
@@ -55,6 +61,8 @@ export type MaterializeInfra = {
   connection: Redis | null;
 };
 
+export type { GcalInfra } from './queue/gcal-infra.js';
+
 export type CreateAppOptions = {
   logger?: boolean;
   env?: AppEnv;
@@ -63,6 +71,7 @@ export type CreateAppOptions = {
   adapters?: Partial<Adapters>;
   reminderInfra?: ReminderInfra | null;
   materializeInfra?: MaterializeInfra | null;
+  gcalInfra?: GcalInfra | null;
 };
 
 const PII_REDACT_PATHS = [
@@ -147,6 +156,37 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
     app.decorate('reminderWorker', null);
   }
 
+  // why: gcal infra mirrors reminder/materialize. Three queues — push, pull, renew. Tests
+  // can pass `gcalInfra: null` to skip Redis sockets entirely. Built before materialize so
+  // the materialize handler can pass gcalInfra.pushQueue through.
+  let gcalInfra: GcalInfra | null;
+  if (opts.gcalInfra === null) {
+    gcalInfra = null;
+  } else if (opts.gcalInfra) {
+    gcalInfra = opts.gcalInfra;
+  } else if (env.nodeEnv === 'test') {
+    gcalInfra = null;
+  } else {
+    gcalInfra = await buildGcalInfra({
+      env,
+      adapters,
+      reminderQueue: reminderInfra?.queue ?? null,
+      log: app.log,
+    });
+  }
+
+  if (gcalInfra) {
+    app.decorate('gcalPushQueue', gcalInfra.pushQueue);
+    app.decorate('gcalPullQueue', gcalInfra.pullQueue);
+    app.decorate('gcalRenewQueue', gcalInfra.renewQueue);
+    app.decorate('gcalRedis', gcalInfra.cacheRedis);
+  } else {
+    app.decorate('gcalPushQueue', null);
+    app.decorate('gcalPullQueue', null);
+    app.decorate('gcalRenewQueue', null);
+    app.decorate('gcalRedis', null);
+  }
+
   // why: materialize infra mirrors reminder infra. Tests skip it by default unless they
   // need to exercise the nightly walk. In production startup we build a live queue+worker
   // and register a BullMQ repeat (nightly at 02:00 UTC) so the walk fires without a
@@ -166,6 +206,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
       createMaterializeHandler({
         gmaps: adapters.gmaps,
         reminderQueue: reminderInfra?.queue ?? null,
+        gcalPushQueue: gcalInfra?.pushQueue ?? null,
         log: app.log,
       }),
     );
@@ -203,6 +244,9 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
         materializeInfra.queue,
         materializeInfra.connection,
       );
+    }
+    if (gcalInfra) {
+      await closeGcalInfraInline(gcalInfra);
     }
   });
 
@@ -282,6 +326,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
   await app.register(publicRoutes);
   await app.register(stripeWebhookRoute);
   await app.register(twilioWebhookRoute);
+  await app.register(gcalWebhookRoute);
   await app.register(recurringSeriesRoutes);
   await app.register(dashboardRoutes);
 

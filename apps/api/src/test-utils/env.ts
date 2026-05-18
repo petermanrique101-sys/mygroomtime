@@ -37,6 +37,9 @@ export function makeTestEnv(overrides: TestEnvOverrides = {}): AppEnv {
       oauthClientId: 'test-client-id',
       oauthClientSecret: 'test-client-secret',
       twinUrl: 'http://localhost:4244',
+      oauthRedirectUri: 'http://localhost:3000/settings/integrations/google-calendar/callback',
+      webhookUrl: 'http://localhost:3000/webhooks/google-calendar',
+      tokenEncryptionKey: 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=',
     },
     gmaps: {
       mode: overrides.gmapsMode ?? 'twin',

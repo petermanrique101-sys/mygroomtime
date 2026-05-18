@@ -18,6 +18,7 @@ function makeDeps(): MaterializeDeps {
   return {
     gmaps: app.adapters.gmaps,
     reminderQueue: null,
+    gcalPushQueue: null,
     log: {
       info: () => undefined,
       warn: () => undefined,

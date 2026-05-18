@@ -10,6 +10,7 @@ import type { PaymentIntentSucceededEvent } from '../../../../adapters/stripe/ty
 import { normalizePhone, tenDigitSuffix, toDialFormat } from '../../../../services/phone.js';
 import { formatAppointmentDateTime } from '../../../../services/format-datetime.js';
 import { enqueueAppointmentReminders } from '../../../../services/reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from '../../../../services/gcal-enqueue.js';
 
 export type HandlerResult = { ok: true } | { ok: false; reason: string };
 
@@ -225,6 +226,13 @@ export function makePaymentIntentSucceededHandler(app: FastifyInstance) {
         true,
       );
     }
+
+    await enqueueGcalPushIfLinked({
+      queue: app.gcalPushQueue,
+      tenantId,
+      appointmentId: appointment.id,
+      kind: 'create',
+    });
 
     return PROMOTED_OK;
   };

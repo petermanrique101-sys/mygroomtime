@@ -26,6 +26,11 @@ const SECTIONS: { to: string; title: string; description: string }[] = [
     title: 'SMS reminders',
     description: '48-hour, 2-hour, and post-appointment text reminders for customers.',
   },
+  {
+    to: '/settings/integrations/google-calendar',
+    title: 'Google Calendar',
+    description: 'Two-way sync — push appointments to your Google Calendar and back.',
+  },
 ];
 
 export default function SettingsIndexRoute(): JSX.Element {

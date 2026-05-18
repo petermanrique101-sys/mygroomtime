@@ -16,6 +16,7 @@ import { loadTenantDefaultBufferMin } from '../../services/buffers.js';
 import { resolveAppointmentCoords } from '../../services/address.js';
 import { conflictMessage } from './conflict-message.js';
 import { rescheduleAppointmentReminders } from '../../services/reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from '../../services/gcal-enqueue.js';
 
 type Params = { id: string };
 
@@ -143,6 +144,15 @@ export default async function updateAppointmentRoute(app: FastifyInstance): Prom
           auth.tenant.id,
           tenantRow?.smsRemindersEnabled === true,
         );
+      }
+
+      if (Object.keys(data).length > 0) {
+        await enqueueGcalPushIfLinked({
+          queue: app.gcalPushQueue,
+          tenantId: auth.tenant.id,
+          appointmentId: hydrated.id,
+          kind: 'update',
+        });
       }
 
       const body: AppointmentMutationResponse = {

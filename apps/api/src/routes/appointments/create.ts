@@ -19,6 +19,7 @@ import { findOverlappingAppointment } from './overlap.js';
 import { geocodeOverride } from './geocode-override.js';
 import { computeEnd } from './serialize.js';
 import { enqueueAppointmentReminders } from '../../services/reminder-schedule.js';
+import { enqueueGcalPushIfLinked } from '../../services/gcal-enqueue.js';
 
 export default async function createAppointmentRoute(app: FastifyInstance): Promise<void> {
   app.post(
@@ -176,6 +177,13 @@ export default async function createAppointmentRoute(app: FastifyInstance): Prom
           );
         }
       }
+
+      await enqueueGcalPushIfLinked({
+        queue: app.gcalPushQueue,
+        tenantId: auth.tenant.id,
+        appointmentId: hydrated.id,
+        kind: 'create',
+      });
 
       const body: AppointmentMutationResponse = {
         appointment: serializeAppointment(hydrated, hydrated.pet, hydrated.client),

@@ -1,55 +1,32 @@
-import type {
-  GcalAdapter,
-  GcalAdapterEnv,
-  GcalCalendar,
-  GcalTokens,
-  GcalRefreshedToken,
-  ExchangeOAuthCodeInput,
-  RefreshAccessTokenInput,
-  ListCalendarsInput,
-  InsertEventInput,
-  InsertEventOutput,
-  UpdateEventInput,
-  UpdateEventOutput,
-  DeleteEventInput,
-  ListEventsInput,
-  ListEventsOutput,
-  WatchChannelInput,
-  WatchChannelOutput,
-} from './types.js';
+import { createImpl } from './impl.js';
+import type { GcalAdapter, GcalAdapterEnv } from './types.js';
 
-function notImplemented(method: string): never {
-  throw new Error(`not implemented: gcal.live.${method}`);
+export function createGcalLiveAdapter(env: GcalAdapterEnv): GcalAdapter {
+  const impl = createImpl({
+    oauthAuthorizeBase: 'https://accounts.google.com/o/oauth2/v2/auth',
+    oauthTokenUrl: 'https://oauth2.googleapis.com/token',
+    oauthRevokeUrl: 'https://oauth2.googleapis.com/revoke',
+    calendarApiBase: 'https://www.googleapis.com',
+    clientId: env.oauthClientId,
+    clientSecret: env.oauthClientSecret,
+  });
+  return { mode: 'live', ...impl };
 }
 
-export function createGcalLiveAdapter(_env: GcalAdapterEnv): GcalAdapter {
-  return {
-    mode: 'live',
-    async exchangeOAuthCode(_input: ExchangeOAuthCodeInput): Promise<GcalTokens> {
-      notImplemented('exchangeOAuthCode');
-    },
-    async refreshAccessToken(
-      _input: RefreshAccessTokenInput,
-    ): Promise<GcalRefreshedToken> {
-      notImplemented('refreshAccessToken');
-    },
-    async listCalendars(_input: ListCalendarsInput): Promise<GcalCalendar[]> {
-      notImplemented('listCalendars');
-    },
-    async insertEvent(_input: InsertEventInput): Promise<InsertEventOutput> {
-      notImplemented('insertEvent');
-    },
-    async updateEvent(_input: UpdateEventInput): Promise<UpdateEventOutput> {
-      notImplemented('updateEvent');
-    },
-    async deleteEvent(_input: DeleteEventInput): Promise<void> {
-      notImplemented('deleteEvent');
-    },
-    async listEvents(_input: ListEventsInput): Promise<ListEventsOutput> {
-      notImplemented('listEvents');
-    },
-    async watchChannel(_input: WatchChannelInput): Promise<WatchChannelOutput> {
-      notImplemented('watchChannel');
-    },
-  };
+export function buildLiveAuthorizeUrl(args: {
+  clientId: string;
+  redirectUri: string;
+  state: string;
+  scope?: string;
+}): string {
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id', args.clientId);
+  url.searchParams.set('redirect_uri', args.redirectUri);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', args.scope ?? 'https://www.googleapis.com/auth/calendar.events');
+  url.searchParams.set('access_type', 'offline');
+  url.searchParams.set('prompt', 'consent');
+  url.searchParams.set('include_granted_scopes', 'true');
+  url.searchParams.set('state', args.state);
+  return url.toString();
 }

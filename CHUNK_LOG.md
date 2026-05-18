@@ -40,8 +40,8 @@ Process discipline:
 | 12 | Public booking submit + Stripe Connect deposit | ✅ done, committed |
 | 13 | Tier upgrade/downgrade + Stripe Customer Portal | ✅ done, committed |
 | 14 | Twin: Twilio + adapter + outbound SMS + booking confirmation SMS | ✅ done, committed |
-| **15** | **Scheduled SMS jobs (48h, 2h, post-appt) via BullMQ** | **← next** |
-| 16 | Route optimization + day route view | pending |
+| 15 | Scheduled SMS jobs (48h, 2h, post-appt) via BullMQ | ✅ done, committed |
+| **16** | **Route optimization + day route view** | **← next, prompt in `NEXT_CHUNK.md`** |
 | 17 | Recurring appointments | pending |
 | 18 | Offline support (PWA, mutation queue) | pending |
 | 19 | Owner dashboard | pending |
@@ -70,6 +70,19 @@ Plan enum: `unpaid | starter | pro | business | past_due | canceled`.
 - **Pro** ($99): public booking page enabled, route optimization, recurring, GCal sync.
 - **Business** ($149): + multi-vehicle dispatch + payroll splits.
 - Public booking page: `starter`/`unpaid`/`canceled` → 404; `past_due` → render with disabled Book button; `pro`/`business` → normal.
+
+### Scheduled SMS reminders + BullMQ (chunk 15)
+- **No retroactive scheduling.** Enabling the tenant's `smsRemindersEnabled` toggle does NOT walk existing future appointments. Same for tier upgrades from Starter to Pro. Reason: silent SMS spam on toggle-on is worse than missing the immediate next-day reminder. If a customer needs the reminder for an upcoming appointment, the operator can manually nudge.
+- **Reschedule is `remove + add`, never upsert.** BullMQ's `Queue.add(name, data, { jobId })` is a no-op on jobId collision — leaving the OLD `delay` in place. Always call `removeAppointmentReminders` first, then `enqueueAppointmentReminders` with fresh data.
+- **Cancel/delete removes pending jobs. Already-sent SmsMessage rows stay** (audit trail).
+- **Worker lives in the api process for v1.** `createApp` constructs queue + worker (skipped when `nodeEnv==='test'` unless `reminderInfra` is explicitly passed). `onClose` shuts them down. Tests that exercise reminders pass `makeTestReminderInfra()` against the real dev Redis; tests that don't are inert.
+- **Fire-time policy is defense in depth.** Worker re-fetches appointment + tenant + client. If canceled/no_show/deleted → success-return, no retry. The Twilio adapter already enforces tier gate + opt-out + idempotency at the wire — worker doesn't replay those rules, just calls `sendSms` and reads the result.
+- **Tight-window skips at enqueue.** `<48h` to start → skip the 48h job, enqueue the 2h + post. `<2h` → skip both reminders, still enqueue post. `<0h` post-appt window → log + skip (defensive — impossible in normal flow).
+- **Worker retries** = BullMQ default exponential backoff, max 5 attempts. After 5: BullMQ `failed` state. SmsMessage row owns the eventual send outcome (success or `error`).
+- **Job ID separator is `.` not `:`** — BullMQ rejects `:` in custom job IDs. Format: `reminder-{kind}.{appointmentId}`. Documented inline in `queue-names.ts`.
+- **Reminder copy lives in one file** (`reminder-templates.ts`). Date format is shared with email + booking-confirmation SMS via `services/format-datetime.ts` — "Wednesday, May 20 at 10:00 AM". Single source.
+- **Toggle-OFF is zero-work.** Existing scheduled jobs are NOT removed. At fire time, the worker still runs but the adapter records `skipped_tier` (if the tenant downgraded) or sends normally (if the toggle was just turned off — defense-in-depth gap to fix in chunk 22 if it becomes a real issue, but for v1 the toggle is rare enough that no walk is fine).
+- **Post-appointment review SMS has no URL v1.** Body is just "Thanks for trusting {tenantName} with {petName}. We'd love your feedback!" Chunk 21 (business tier polish) adds `Tenant.reviewUrl`.
 
 ### Outbound SMS + opt-out (chunk 14)
 - **Adapter is the enforcement boundary.** Tier gate (Pro+), opt-out lookup, idempotency dedupe, mandatory "Reply STOP to opt out." suffix, and 160-char truncation all live in `apps/api/src/adapters/twilio/compose.ts`. Call sites just call `sendSms(...)` and read the result; they never enforce the rules themselves.
@@ -251,6 +264,20 @@ Tenants don't get a Vehicle on signup. `ensureDefaultVehicle(tenantId)` lazy-cre
 - 60 req/min rate limit per IP per slug on public endpoints.
 - `Tenant.phone` added in migration.
 - 13 new api tests, 10 subdomain tests, 5 public web tests. 117 api tests total.
+
+### Chunk 15 — Scheduled SMS reminders via BullMQ
+- Queue + Worker factories in `apps/api/src/queue/`. Single source for queue name + job names + `reminderJobId(name, appointmentId)` helper using `.` separator (BullMQ rejects `:` in custom IDs).
+- Lifecycle helpers in `apps/api/src/services/reminder-schedule.ts`: `computeReminderTimestamps`, `enqueueAppointmentReminders`, `removeAppointmentReminders`, `rescheduleAppointmentReminders`. Tight-window appointments return nulls for impossible kinds. Reschedule = explicit remove + add.
+- Appointment route hooks: `create.ts`, `update.ts` (reschedule on start change only), `delete.ts`. `payment-intent-succeeded.ts` enqueues on webhook promote.
+- Worker handler (`reminder-worker.ts`): re-fetches appointment + tenant + client at fire time; returns success on missing/canceled/no_show/opted-out/tier-gated/send-failure-business-outcome; throws only on infra errors so BullMQ retries (5x exp backoff).
+- App wiring: `createApp` constructs queue + worker (skipped when `nodeEnv==='test'` unless `reminderInfra` is overridden). `onClose` shuts down worker → queue → redis. `CreateAppOptions.reminderInfra` lets tests pass `makeTestReminderInfra()` against dev Redis when needed.
+- Schema: `20260522000000_sms_reminders_settings` adds `Tenant.smsRemindersEnabled Boolean @default(false)`. Opt-in — tenants must enable explicitly.
+- Settings: `GET/POST /settings/sms` + `apps/web/src/routes/settings/sms.tsx`. Starter gets 403 on enable + "Upgrade to Pro" copy.
+- Boundary tested: 47h59m before start returns `fortyEightH: null` (start - 48h is in the past). Exact-48h also returns null (`>` not `>=`) — a job firing with 0 delay would be useless.
+- "No ghost jobs after reschedule" test enqueues for start = +5d, captures 48h delay, PATCHes start to +24h later, asserts new delay > old and queue size still exactly 3.
+- Date format helper extracted to `services/format-datetime.ts` and reused by booking-confirmation SMS (chunk 12 + 14 path) and the 48h reminder template. Single source.
+- `apps/api/scripts/fire-reminder.ts` + `pnpm dev:fire-reminder` for promoting a delayed job in local dev. Operator-facing version lands in chunk 22.
+- 36 → (api) test files, 195 tests pass. Web suite at 40 tests, all green.
 
 ### Chunk 14 — Twilio twin + adapter + booking confirmation SMS
 - New `twins/twilio` package mirrors `twins/stripe` shape. `POST /2010-04-01/Accounts/:sid/Messages.json` for outbound + `POST /__twin_inbound` test helper that fires properly-signed POSTs to the api's inbound webhook (lets tests simulate "customer texted STOP" without spinning up real Twilio).

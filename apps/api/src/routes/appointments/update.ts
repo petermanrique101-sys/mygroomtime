@@ -48,6 +48,7 @@ export default async function updateAppointmentRoute(app: FastifyInstance): Prom
       let warning: { code: 'address_unverified'; message: string } | null = null;
 
       if (input.notes !== undefined) data.notes = input.notes;
+      if (input.timeLocked !== undefined) data.timeLocked = input.timeLocked;
 
       if (input.addressOverride !== undefined) {
         if (input.addressOverride === null) {

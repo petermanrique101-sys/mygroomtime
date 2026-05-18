@@ -255,6 +255,7 @@ model Appointment {
   status            AppointmentStatus @default(scheduled)
   scheduledStart    DateTime
   durationMin       Int
+  timeLocked        Boolean           @default(false)
   serviceNameSnapshot         String
   servicePriceCentsSnapshot   Int
   serviceDepositCentsSnapshot Int

@@ -7,6 +7,9 @@ import type {
   ClientWithPetsOutput,
   ServiceOutput,
 } from '@mygroomtime/shared';
+import { useAuthOptional } from '../../lib/auth-context';
+import { RouteView } from './route-view';
+import { useRouteOptimization } from './use-route-optimization';
 import { listClients, getClient } from '../../lib/clients-api';
 import { listServices } from '../../lib/services-api';
 import {
@@ -47,6 +50,8 @@ const BUFFER_KEY = (dayIso: string): readonly unknown[] => ['appointment-buffers
 
 export default function CalendarRoute(): JSX.Element {
   const qc = useQueryClient();
+  const auth = useAuthOptional();
+  const session = auth?.session ?? null;
   const { view, setView } = useViewMode();
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -54,6 +59,8 @@ export default function CalendarRoute(): JSX.Element {
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [now, setNow] = useState<Date>(() => new Date());
+  const [showRoute, setShowRoute] = useState(false);
+  const routeOpt = useRouteOptimization(anchor, (msg) => setToast(msg));
 
   const range = useMemo(() => rangeForView(view, anchor), [view, anchor]);
   const dayIso = useMemo(() => startOfDay(anchor).toISOString(), [anchor]);
@@ -271,16 +278,54 @@ export default function CalendarRoute(): JSX.Element {
           onViewChange={setView}
           onNew={openNewFromHeader}
         />
-        <div className="flex items-center justify-end gap-3 px-3 py-2 text-xs">
-          <Link to="/clients" className="text-gray-600 underline">
-            Clients
-          </Link>
-          <Link to="/settings/services" className="text-gray-600 underline">
-            Settings
-          </Link>
+        <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+          <div className="flex gap-2" role="tablist" aria-label="Calendar mode">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!showRoute}
+              onClick={() => setShowRoute(false)}
+              className={`min-h-[36px] rounded-lg px-3 text-sm font-medium ${
+                !showRoute ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              Calendar
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={showRoute}
+              onClick={() => setShowRoute(true)}
+              className={`min-h-[36px] rounded-lg px-3 text-sm font-medium ${
+                showRoute ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              Today&rsquo;s Route
+            </button>
+          </div>
+          <div className="flex gap-3">
+            <Link to="/clients" className="text-gray-600 underline">
+              Clients
+            </Link>
+            <Link to="/settings/services" className="text-gray-600 underline">
+              Settings
+            </Link>
+          </div>
         </div>
         <div className="flex-1 overflow-x-hidden overflow-y-auto pb-12">
-          {apptQuery.isLoading ? (
+          {showRoute ? (
+            <RouteView
+              route={routeOpt.route}
+              tenantPlan={session?.tenant.plan ?? 'starter'}
+              loading={routeOpt.optimize.isPending}
+              applying={routeOpt.apply.isPending}
+              error={routeOpt.routeError}
+              onOptimize={() => routeOpt.optimize.mutate()}
+              onApply={() => routeOpt.apply.mutate()}
+              onToggleLock={(id, locked) => routeOpt.lock.mutate({ id, locked })}
+              onBackToCalendar={() => setShowRoute(false)}
+            />
+          ) : apptQuery.isLoading ? (
             <p className="px-4 py-6 text-sm text-gray-500">Loading calendar…</p>
           ) : apptQuery.isError ? (
             <p className="px-4 py-6 text-sm text-red-600">

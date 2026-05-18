@@ -17,3 +17,4 @@ export * from './public-booking.js';
 export * from './settings-payments.js';
 export * from './settings-billing.js';
 export * from './settings-sms.js';
+export * from './route-optimization.js';

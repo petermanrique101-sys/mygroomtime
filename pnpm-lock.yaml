@@ -51,7 +51,7 @@ importers:
         specifier: ^0.41.1
         version: 0.41.1
       bullmq:
-        specifier: ^5.34.0
+        specifier: ^5
         version: 5.76.10
       fastify:
         specifier: ^5.1.0
@@ -87,9 +87,6 @@ importers:
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
-      dotenv-cli:
-        specifier: ^7.4.4
-        version: 7.4.4
       tsx:
         specifier: ^4.19.2
         version: 4.22.1

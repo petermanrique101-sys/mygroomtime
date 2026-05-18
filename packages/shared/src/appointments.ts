@@ -47,9 +47,14 @@ export const AppointmentUpdateRequestSchema = z
       .string()
       .refine((s) => !Number.isNaN(Date.parse(s)), 'Start must be a valid ISO date-time.')
       .optional(),
+    timeLocked: z.boolean().optional(),
   })
   .refine(
-    (v) => v.notes !== undefined || v.addressOverride !== undefined || v.start !== undefined,
+    (v) =>
+      v.notes !== undefined ||
+      v.addressOverride !== undefined ||
+      v.start !== undefined ||
+      v.timeLocked !== undefined,
     'Provide at least one field to update.',
   );
 export type AppointmentUpdateRequest = z.infer<typeof AppointmentUpdateRequestSchema>;
@@ -159,6 +164,7 @@ export const AppointmentOutputSchema = z.object({
   })
     .nullable(),
   notes: z.string(),
+  timeLocked: z.boolean(),
   canceledAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),

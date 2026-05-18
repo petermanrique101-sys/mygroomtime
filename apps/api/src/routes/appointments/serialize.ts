@@ -44,6 +44,7 @@ export function serializeAppointment(
         }
       : null,
     notes: a.notes,
+    timeLocked: a.timeLocked,
     canceledAt: a.canceledAt ? a.canceledAt.toISOString() : null,
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),

@@ -104,6 +104,30 @@ The worker fires `app.adapters.twilio.sendSms`, which writes the usual audit row
 
 Toggle-off is intentionally non-destructive: existing scheduled jobs stay in the queue and are skipped at fire time by the adapter's tier / opt-out checks. Toggling back on does not backfill reminders for existing future appointments — only newly created or rescheduled appointments enqueue jobs.
 
+### Route optimization in dev
+
+Pro+ tenants get a "Today's Route" tab on the calendar that orders the day's stops by nearest-neighbor from the configured depot. Single-vehicle in chunk 16; multi-vehicle dispatch lands in chunk 21.
+
+To exercise it locally:
+
+1. Promote a tenant to Pro and seed a depot:
+   ```sql
+   UPDATE "Tenant"
+     SET plan='pro',
+         "depotLat"=33.0198,
+         "depotLng"=-96.6989
+     WHERE id='…';
+   ```
+2. Sign in as the owner. Make sure the day has at least 2–3 clients with verified geocoded addresses (the geocode twin covers Plano / McKinney / Frisco zips).
+3. Create a few appointments via the calendar for the same date.
+4. Open the calendar → tap **Today's Route**.
+5. Hit **Optimize route**. The API returns suggested order + drive times. Visual order is rendered as a schematic SVG (tile-rendered map planned for chunk 21).
+6. Hit **Apply suggested times** to persist the reschedules. The chunk-15 reminder jobs are rescheduled to the new times automatically.
+
+To pin a particular appointment to its slot (so the optimizer arranges other stops around it), check "Lock time" on the route row — that flips `Appointment.timeLocked=true` via `PATCH /appointments/:id`.
+
+Starter tenants see an upgrade nudge instead of the Optimize button; the backend returns `403 { reason: 'tier_gated' }` on `GET /appointments/today/route` for them.
+
 ## Public booking pages in dev
 
 The booking page lives at `<slug>.localhost:5173` (works natively in Chrome/Firefox without a hosts file). The tenant must be on the Pro or Business plan **and** Stripe Connect must be onboarded with `chargesEnabled=true` — otherwise the page renders with the Book button disabled.

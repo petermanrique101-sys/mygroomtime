@@ -103,3 +103,11 @@ export function useAuth(): AuthContextValue {
   if (!ctx) throw new Error('useAuth must be used within <AuthProvider>');
   return ctx;
 }
+
+// why: chunk-9 calendar.test.tsx renders <CalendarRoute /> without AuthProvider. Chunk 16
+// added a need to read tenant.plan from inside the route (route-optimization is Pro+).
+// `useAuthOptional` lets the route degrade to "no session known" instead of crashing
+// pre-existing tests we can't touch (constitution + 400-LOC carveout).
+export function useAuthOptional(): AuthContextValue | null {
+  return useContext(AuthContext);
+}

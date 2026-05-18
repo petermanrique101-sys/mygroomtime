@@ -1,23 +1,24 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { db } from '@mygroomtime/db';
+import { db, GoogleCalendarLinkKind } from '@mygroomtime/db';
 import { requireAuth } from '../../../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../../../middleware/require-paid-plan.js';
+import { requireBusinessTier } from '../../../../middleware/require-business-tier.js';
 import { decryptToken } from '../../../../services/token-encrypt.js';
 import {
   getAccessToken,
   invalidateAccessToken,
 } from '../../../../services/gcal-token-cache.js';
 
-export default async function gcalDisconnectRoute(app: FastifyInstance): Promise<void> {
+export default async function gcalOpsDisconnectRoute(app: FastifyInstance): Promise<void> {
   app.post(
-    '/settings/integrations/google-calendar/disconnect',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    '/settings/integrations/google-calendar/operations/disconnect',
+    { preHandler: [requireAuth, requirePaidPlan, requireBusinessTier] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const link = await db
         .forTenant(auth.tenant.id)
         .googleCalendarLink.findFirst({
-          where: { userId: auth.user.id, linkKind: 'user' },
+          where: { linkKind: GoogleCalendarLinkKind.tenant_operations },
         });
       if (!link) {
         reply.send({ ok: true, alreadyDisconnected: true });
@@ -25,9 +26,10 @@ export default async function gcalDisconnectRoute(app: FastifyInstance): Promise
       }
 
       const env = app.appEnv;
+      const tokenSubject = `tenant-ops:${auth.tenant.id}`;
 
-      // why: best-effort revoke + stop. Wrapped because the user disconnecting must
-      // succeed even if Google is unreachable. The row + watch are wiped regardless.
+      // why: ops links don't carry a watch channel (write-only per spec), but a future
+      // migration could add one — keep the stop step here defensively.
       try {
         if (link.watchChannelId && link.watchResourceId) {
           const token = await getAccessToken(
@@ -36,7 +38,7 @@ export default async function gcalDisconnectRoute(app: FastifyInstance): Promise
               gcal: app.adapters.gcal,
               encryptionKey: env.gcal.tokenEncryptionKey,
             },
-            { userId: link.userId ?? auth.user.id, encryptedRefreshToken: link.encryptedRefreshToken },
+            { userId: tokenSubject, encryptedRefreshToken: link.encryptedRefreshToken },
           );
           await app.adapters.gcal.stopChannel({
             accessToken: token.accessToken,
@@ -47,7 +49,7 @@ export default async function gcalDisconnectRoute(app: FastifyInstance): Promise
       } catch (err) {
         request.log.warn(
           { err: (err as Error).message },
-          'gcal-disconnect: stop-channel failed (continuing)',
+          'gcal-ops-disconnect: stop-channel failed (continuing)',
         );
       }
 
@@ -57,11 +59,11 @@ export default async function gcalDisconnectRoute(app: FastifyInstance): Promise
       } catch (err) {
         request.log.warn(
           { err: (err as Error).message },
-          'gcal-disconnect: revoke failed (continuing)',
+          'gcal-ops-disconnect: revoke failed (continuing)',
         );
       }
 
-      await invalidateAccessToken(app.gcalRedis ?? null, link.userId ?? auth.user.id);
+      await invalidateAccessToken(app.gcalRedis ?? null, tokenSubject);
 
       await db
         .forTenant(auth.tenant.id)

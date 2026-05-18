@@ -39,9 +39,12 @@ export function createGcalPullHandler(deps: GcalPullDeps): GcalPullHandler {
       return;
     }
 
+    // why: ops links carry a null userId. Use the link id as a stable cache subject so
+    // user and ops tokens never collide.
+    const tokenSubject = link.userId ?? `tenant-ops:${link.tenantId}`;
     const token = await getAccessToken(
       { redis: deps.redis, gcal: deps.gcal, encryptionKey: deps.encryptionKey },
-      { userId: link.userId, encryptedRefreshToken: link.encryptedRefreshToken },
+      { userId: tokenSubject, encryptedRefreshToken: link.encryptedRefreshToken },
     );
 
     const list = await deps.gcal.listEvents({

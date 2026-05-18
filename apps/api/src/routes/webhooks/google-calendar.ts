@@ -53,7 +53,17 @@ export default async function gcalWebhookRoute(app: FastifyInstance): Promise<vo
       }
 
       // why: defense-in-depth — channels survive past user role changes. Resolve the
-      // user → tenant and confirm the user still belongs there.
+      // user → tenant and confirm the user still belongs there. Ops links are write-only
+      // per chunk-21 spec; if we ever receive an ops notification it means a stale watch
+      // channel — ignore safely so Google stops retrying.
+      if (link.linkKind === 'tenant_operations') {
+        reply.code(200).send({ ok: true, ignored: 'ops_link_write_only' });
+        return;
+      }
+      if (!link.userId) {
+        reply.code(200).send({ ok: true, ignored: 'orphan_link' });
+        return;
+      }
       const user = await db
         .forTenant(link.tenantId)
         .user.findFirst({ where: { id: link.userId } });

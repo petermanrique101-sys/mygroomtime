@@ -49,7 +49,14 @@ export async function findActiveServiceForCreate(
 export async function ensureDefaultVehicle(
   scoped: TenantScopedDb,
 ): Promise<string> {
-  const existing = await scoped.vehicle.findFirst({ orderBy: { createdAt: 'asc' } });
+  // why: chunk 21 added active + soft-delete. Prefer the oldest active+not-deleted vehicle
+  // as the default; only lazy-create if no active vehicle exists. A tenant with all
+  // vehicles soft-deleted shouldn't happen (delete.ts blocks it), but if it does we
+  // recover by creating a new "Van 1".
+  const existing = await scoped.vehicle.findFirst({
+    where: { active: true, deletedAt: null },
+    orderBy: { createdAt: 'asc' },
+  });
   if (existing) return existing.id;
   const created = await scoped.vehicle.create({ data: { name: 'Van 1' } });
   return created.id;

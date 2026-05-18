@@ -82,6 +82,17 @@ export default async function createAppointmentRoute(app: FastifyInstance): Prom
       const start = new Date(input.start);
       const vehicleId = await ensureDefaultVehicle(scoped);
 
+      // why: chunk-21 inherits the assigned groomer from the (default) vehicle. Without an
+      // explicit override on the request, new appointments land on the van's driver. The
+      // current logged-in user remains the fallback when the vehicle has no driver — keeps
+      // chunk-2 behavior intact for single-vehicle tenants.
+      const vehicleRow = await scoped.vehicle.findFirst({
+        where: { id: vehicleId },
+        select: { assignedGroomerId: true },
+      });
+      const inheritedGroomerId =
+        vehicleRow?.assignedGroomerId ?? auth.user.id;
+
       const conflict = await findOverlappingAppointment(scoped, {
         vehicleId,
         start,
@@ -137,7 +148,7 @@ export default async function createAppointmentRoute(app: FastifyInstance): Prom
           petId: petWithClient.id,
           serviceId: service.id,
           vehicleId,
-          groomerId: auth.user.id,
+          groomerId: inheritedGroomerId,
           status: AppointmentStatus.scheduled,
           scheduledStart: start,
           durationMin: service.durationMin,

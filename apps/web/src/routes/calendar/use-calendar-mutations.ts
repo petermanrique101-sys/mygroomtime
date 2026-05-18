@@ -27,6 +27,12 @@ export type CalendarMutationsApi = {
     { id: string; start: Date },
     { previous: AppointmentOutput[] | undefined }
   >;
+  reassignVehicle: UseMutationResult<
+    AppointmentMutationResponse,
+    Error,
+    { id: string; vehicleId: string },
+    { previous: AppointmentOutput[] | undefined }
+  >;
   pauseSeries: UseMutationResult<unknown, Error, string, unknown>;
   resumeSeries: UseMutationResult<unknown, Error, string, unknown>;
 };
@@ -126,6 +132,37 @@ export function useCalendarMutations(args: Args): CalendarMutationsApi {
     },
   });
 
+  const reassignVehicle = useMutation({
+    mutationFn: async (vars: { id: string; vehicleId: string }) => {
+      const res = await updateAppointment(vars.id, { vehicleId: vars.vehicleId });
+      if (!res.ok) {
+        const e = new Error(res.error.message);
+        (e as Error & { status?: number }).status = res.error.status;
+        throw e;
+      }
+      return res.data;
+    },
+    onMutate: async (vars) => {
+      await qc.cancelQueries({ queryKey: ['appointments'] });
+      const previous = qc.getQueryData<AppointmentOutput[]>(args.apptQueryKey);
+      if (previous) {
+        const optimistic = previous.map((a) =>
+          a.id === vars.id ? { ...a, vehicleId: vars.vehicleId } : a,
+        );
+        qc.setQueryData(args.apptQueryKey, optimistic);
+      }
+      return { previous };
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(args.apptQueryKey, ctx.previous);
+      args.onToast((err as Error).message);
+    },
+    onSuccess: () => {
+      refresh();
+      args.onToast('Moved to new vehicle.');
+    },
+  });
+
   const pauseSeries = useMutation({
     mutationFn: async (seriesId: string) => {
       const res = await pauseRecurringSeries(seriesId);
@@ -152,5 +189,5 @@ export function useCalendarMutations(args: Args): CalendarMutationsApi {
     onError: (err) => args.onToast((err as Error).message),
   });
 
-  return { create, cancel, notes, reschedule, pauseSeries, resumeSeries };
+  return { create, cancel, notes, reschedule, reassignVehicle, pauseSeries, resumeSeries };
 }

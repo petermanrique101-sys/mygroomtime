@@ -48,6 +48,8 @@ import twilioWebhookRoute from './routes/webhooks/twilio/index.js';
 import gcalWebhookRoute from './routes/webhooks/google-calendar.js';
 import recurringSeriesRoutes from './routes/recurring-series/index.js';
 import dashboardRoutes from './routes/dashboard/index.js';
+import vehicleRoutes from './routes/vehicles/index.js';
+import payrollRoutes from './routes/payroll/index.js';
 
 export type ReminderInfra = {
   queue: ReminderQueue;
@@ -329,6 +331,8 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
   await app.register(gcalWebhookRoute);
   await app.register(recurringSeriesRoutes);
   await app.register(dashboardRoutes);
+  await app.register(vehicleRoutes);
+  await app.register(payrollRoutes);
 
   return app;
 }

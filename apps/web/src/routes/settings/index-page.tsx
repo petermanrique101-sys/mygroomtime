@@ -31,6 +31,16 @@ const SECTIONS: { to: string; title: string; description: string }[] = [
     title: 'Google Calendar',
     description: 'Two-way sync — push appointments to your Google Calendar and back.',
   },
+  {
+    to: '/settings/vehicles',
+    title: 'Vehicles',
+    description: 'Vans, assigned drivers, dispatch (Business tier).',
+  },
+  {
+    to: '/payroll',
+    title: 'Payroll',
+    description: 'Per-groomer revenue + tips. CSV export (Business tier).',
+  },
 ];
 
 export default function SettingsIndexRoute(): JSX.Element {

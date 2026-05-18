@@ -23,3 +23,27 @@ export async function disconnectGcal(): ReturnType<typeof apiFetch<{ ok: boolean
     method: 'POST',
   });
 }
+
+export type GcalOpsStatus = {
+  connected: boolean;
+  googleEmail: string | null;
+  needsReauth: boolean;
+};
+
+export async function fetchGcalOpsStatus(): ReturnType<typeof apiFetch<GcalOpsStatus>> {
+  return apiFetch<GcalOpsStatus>('/settings/integrations/google-calendar/operations');
+}
+
+export async function startGcalOpsConnect(): ReturnType<typeof apiFetch<{ url: string }>> {
+  return apiFetch<{ url: string }>(
+    '/settings/integrations/google-calendar/operations/connect',
+    { method: 'POST' },
+  );
+}
+
+export async function disconnectGcalOps(): ReturnType<typeof apiFetch<{ ok: boolean }>> {
+  return apiFetch<{ ok: boolean }>(
+    '/settings/integrations/google-calendar/operations/disconnect',
+    { method: 'POST' },
+  );
+}

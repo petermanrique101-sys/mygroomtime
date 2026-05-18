@@ -78,6 +78,16 @@ enum MutationLogStatus {
   failed
 }
 
+enum PayrollPeriodKind {
+  weekly
+  biweekly
+}
+
+enum GoogleCalendarLinkKind {
+  user
+  tenant_operations
+}
+
 model Tenant {
   id                       String    @id @default(cuid())
   slug                     String    @unique
@@ -98,6 +108,8 @@ model Tenant {
   defaultServiceAreaZips   String[]  @default([])
   defaultBufferMinutes     Int       @default(15)
   smsRemindersEnabled      Boolean   @default(false)
+  payrollPeriodKind        PayrollPeriodKind @default(biweekly)
+  payrollPeriodAnchorDate  DateTime?
   depotAddressStreet       String?
   depotAddressCity         String?
   depotAddressZip          String?
@@ -151,25 +163,28 @@ model User {
   appointments      Appointment[] @relation("AppointmentGroomer")
   preferredByClients Client[]     @relation("ClientPreferredGroomer")
   mutationLogs      MutationLog[]
-  googleCalendarLink GoogleCalendarLink?
+  googleCalendarLinks GoogleCalendarLink[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
 }
 
 model Vehicle {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   tenantId          String
   name              String
   assignedGroomerId String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  active            Boolean   @default(true)
+  deletedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   assignedGroomer User?         @relation("VehicleAssignedGroomer", fields: [assignedGroomerId], references: [id], onDelete: SetNull)
   appointments    Appointment[]
 
   @@index([tenantId])
+  @@index([tenantId, active, deletedAt])
 }
 
 model Service {
@@ -286,6 +301,7 @@ model Appointment {
   mutationUuid      String?           @unique
   rescheduledFromAppointmentId String?
   googleEventId     String?
+  opsGoogleEventId  String?
   canceledAt        DateTime?
   onTheWayAt        DateTime?
   startedAt         DateTime?
@@ -307,6 +323,8 @@ model Appointment {
   @@index([tenantId, scheduledStart])
   @@index([tenantId, status, scheduledStart])
   @@index([tenantId, completedAt])
+  @@index([tenantId, vehicleId, scheduledStart])
+  @@index([tenantId, groomerId, completedAt])
   @@index([rescheduledFromAppointmentId])
   @@index([googleEventId])
 }
@@ -417,9 +435,10 @@ model WebhookEvent {
 }
 
 model GoogleCalendarLink {
-  id                      String   @id @default(cuid())
+  id                      String    @id @default(cuid())
   tenantId                String
-  userId                  String   @unique
+  userId                  String?
+  linkKind                GoogleCalendarLinkKind @default(user)
   googleUserId            String
   googleEmail             String?
   googleCalendarId        String   @default("primary")
@@ -436,9 +455,11 @@ model GoogleCalendarLink {
   updatedAt               DateTime @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, linkKind])
   @@index([tenantId])
+  @@index([tenantId, linkKind])
   @@index([watchExpirationAt])
 }
 

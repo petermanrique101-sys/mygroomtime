@@ -31,13 +31,30 @@ export const GCAL_PUSH_QUEUE = 'gcal-push';
 export const GCAL_PUSH_JOB_NAMES = ['gcal-push.create', 'gcal-push.update', 'gcal-push.delete'] as const;
 export type GcalPushJobName = (typeof GCAL_PUSH_JOB_NAMES)[number];
 
+// why: chunk 21 introduces a per-tenant operations calendar. Each appointment can fire
+// TWO pushes — one to the assigned groomer's calendar (linkKind='user') and one to the
+// tenant operations calendar (linkKind='tenant_operations'). The job data carries which
+// link the worker should target; jobIds embed the kind so the two pushes never collide.
+export const GCAL_PUSH_LINK_KINDS = ['user', 'tenant_operations'] as const;
+export type GcalPushLinkKind = (typeof GCAL_PUSH_LINK_KINDS)[number];
+
 export type GcalPushJobData = {
   appointmentId: string;
   tenantId: string;
+  linkKind: GcalPushLinkKind;
+  // why: cross-vehicle drag may reassign the groomer. The push worker needs the previous
+  // groomerId (when it differs) so it can DELETE the event from the old user's calendar
+  // before/while creating a new one on the new user's calendar. Null on initial create
+  // or same-groomer updates.
+  previousGroomerId?: string | null;
 };
 
-export function gcalPushJobId(name: GcalPushJobName, appointmentId: string): string {
-  return `${name}.${appointmentId}`;
+export function gcalPushJobId(
+  name: GcalPushJobName,
+  appointmentId: string,
+  linkKind: GcalPushLinkKind,
+): string {
+  return `${name}.${linkKind}.${appointmentId}`;
 }
 
 export const GCAL_PULL_QUEUE = 'gcal-pull';

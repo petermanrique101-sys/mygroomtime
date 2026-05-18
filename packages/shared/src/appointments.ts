@@ -48,13 +48,17 @@ export const AppointmentUpdateRequestSchema = z
       .refine((s) => !Number.isNaN(Date.parse(s)), 'Start must be a valid ISO date-time.')
       .optional(),
     timeLocked: z.boolean().optional(),
+    vehicleId: z.string().min(1).optional(),
+    groomerId: z.string().min(1).nullable().optional(),
   })
   .refine(
     (v) =>
       v.notes !== undefined ||
       v.addressOverride !== undefined ||
       v.start !== undefined ||
-      v.timeLocked !== undefined,
+      v.timeLocked !== undefined ||
+      v.vehicleId !== undefined ||
+      v.groomerId !== undefined,
     'Provide at least one field to update.',
   );
 export type AppointmentUpdateRequest = z.infer<typeof AppointmentUpdateRequestSchema>;

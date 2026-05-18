@@ -4,21 +4,33 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 // We never trust the redirected value blindly; the HMAC over (userId|tenantId|nonce|expiry)
 // is verified before any DB write happens. JWT would be overkill — state is a 1-min token.
 
+export type StateLinkKind = 'user' | 'tenant_operations';
+
 export type StatePayload = {
   userId: string;
   tenantId: string;
   nonce: string;
   expiresAt: number;
+  // why: chunk 21 splits OAuth into per-user vs tenant-operations flows. Carrying the
+  // discriminator in state lets one callback route handle both. Default 'user' for
+  // chunk-20 callers that don't set this field.
+  linkKind?: StateLinkKind;
 };
 
 const STATE_TTL_MS = 5 * 60 * 1000;
 
-export function buildState(args: { userId: string; tenantId: string; secret: string }): string {
+export function buildState(args: {
+  userId: string;
+  tenantId: string;
+  secret: string;
+  linkKind?: StateLinkKind;
+}): string {
   const payload: StatePayload = {
     userId: args.userId,
     tenantId: args.tenantId,
     nonce: randomBytes(8).toString('base64url'),
     expiresAt: Date.now() + STATE_TTL_MS,
+    linkKind: args.linkKind ?? 'user',
   };
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const mac = createHmac('sha256', args.secret).update(body).digest('base64url');

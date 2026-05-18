@@ -20,3 +20,5 @@ export * from './settings-sms.js';
 export * from './route-optimization.js';
 export * from './public-reschedule.js';
 export * from './dashboard.js';
+export * from './vehicles.js';
+export * from './payroll.js';

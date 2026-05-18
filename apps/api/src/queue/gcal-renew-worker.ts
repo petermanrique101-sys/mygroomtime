@@ -48,7 +48,10 @@ async function renewOne(deps: GcalRenewDeps, link: LinkRow): Promise<void> {
     if (link.watchChannelId && link.watchResourceId) {
       const token = await getAccessToken(
         { redis: deps.redis, gcal: deps.gcal, encryptionKey: deps.encryptionKey },
-        { userId: link.userId, encryptedRefreshToken: link.encryptedRefreshToken },
+        {
+          userId: link.userId ?? `tenant-ops:${link.tenantId}`,
+          encryptedRefreshToken: link.encryptedRefreshToken,
+        },
       );
       await deps.gcal
         .stopChannel({
@@ -61,7 +64,10 @@ async function renewOne(deps: GcalRenewDeps, link: LinkRow): Promise<void> {
 
     const token = await getAccessToken(
       { redis: deps.redis, gcal: deps.gcal, encryptionKey: deps.encryptionKey },
-      { userId: link.userId, encryptedRefreshToken: link.encryptedRefreshToken },
+      {
+          userId: link.userId ?? `tenant-ops:${link.tenantId}`,
+          encryptedRefreshToken: link.encryptedRefreshToken,
+        },
     );
 
     const channelId = randomUUID();

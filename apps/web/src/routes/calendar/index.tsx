@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type {
   AppointmentOutput,
   ClientWithPetsOutput,
   ServiceOutput,
+  VehicleOutput,
 } from '@mygroomtime/shared';
 import { useAuthOptional } from '../../lib/auth-context';
 import { useLastSyncedLabel } from '../../lib/use-last-synced';
@@ -15,7 +15,10 @@ import { useLifecycle } from './use-lifecycle';
 import { listClients, getClient } from '../../lib/clients-api';
 import { listServices } from '../../lib/services-api';
 import { getDayBuffers, listAppointments } from '../../lib/appointments-api';
+import { listVehicles } from '../../lib/vehicles-api';
 import { useCalendarMutations } from './use-calendar-mutations';
+import { DispatchView } from './dispatch-view';
+import { ModeToggle, type CalendarMode } from './mode-toggle';
 import {
   formatHeaderLabel,
   rangeForView,
@@ -55,7 +58,10 @@ export default function CalendarRoute(): JSX.Element {
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [now, setNow] = useState<Date>(() => new Date());
-  const [showRoute, setShowRoute] = useState(false);
+  const [mode, setMode] = useState<CalendarMode>('calendar');
+  const showRoute = mode === 'route';
+  const showDispatch = mode === 'dispatch';
+  const isBusiness = session?.tenant.plan === 'business';
   const routeOpt = useRouteOptimization(anchor, (msg) => setToast(msg));
   const lifecycle = useLifecycle((msg) => setToast(msg));
 
@@ -99,6 +105,16 @@ export default function CalendarRoute(): JSX.Element {
     },
   });
 
+  const vehiclesQuery = useQuery({
+    queryKey: ['vehicles', 'active'],
+    enabled: isBusiness,
+    queryFn: async () => {
+      const res = await listVehicles();
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data.vehicles;
+    },
+  });
+
   const clientsWithPetsQuery = useQuery({
     queryKey: ['clients', 'with-pets'],
     enabled: (clientsQuery.data?.length ?? 0) > 0,
@@ -132,6 +148,7 @@ export default function CalendarRoute(): JSX.Element {
   const appointments: AppointmentOutput[] = apptQuery.data ?? [];
   const services: ServiceOutput[] = servicesQuery.data ?? [];
   const clientsWithPets: ClientWithPetsOutput[] = clientsWithPetsQuery.data ?? [];
+  const vehicles: VehicleOutput[] = vehiclesQuery.data ?? [];
   const buffers = useMemo(
     () => buildBufferLookup(buffersQuery.data?.buffers ?? []),
     [buffersQuery.data],
@@ -202,44 +219,8 @@ export default function CalendarRoute(): JSX.Element {
           onViewChange={setView}
           onNew={openNewFromHeader}
         />
-        <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
-          <div className="flex gap-2" role="tablist" aria-label="Calendar mode">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={!showRoute}
-              onClick={() => setShowRoute(false)}
-              className={`min-h-[36px] rounded-lg px-3 text-sm font-medium ${
-                !showRoute ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              Calendar
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={showRoute}
-              onClick={() => setShowRoute(true)}
-              className={`min-h-[36px] rounded-lg px-3 text-sm font-medium ${
-                showRoute ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              Today&rsquo;s Route
-            </button>
-          </div>
-          <div className="flex gap-3">
-            <Link to="/dashboard" className="text-gray-600 underline">
-              Dashboard
-            </Link>
-            <Link to="/clients" className="text-gray-600 underline">
-              Clients
-            </Link>
-            <Link to="/settings/services" className="text-gray-600 underline">
-              Settings
-            </Link>
-          </div>
-        </div>
-        <div className="flex-1 overflow-x-hidden overflow-y-auto pb-12">
+        <ModeToggle mode={mode} onChange={setMode} isBusiness={isBusiness} />
+        <div className={`flex-1 ${showDispatch ? 'overflow-y-auto' : 'overflow-x-hidden overflow-y-auto'} pb-12`}>
           {showRoute ? (
             <RouteView
               route={routeOpt.route}
@@ -250,7 +231,22 @@ export default function CalendarRoute(): JSX.Element {
               onOptimize={() => routeOpt.optimize.mutate()}
               onApply={() => routeOpt.apply.mutate()}
               onToggleLock={(id, locked) => routeOpt.lock.mutate({ id, locked })}
-              onBackToCalendar={() => setShowRoute(false)}
+              onBackToCalendar={() => setMode('calendar')}
+            />
+          ) : showDispatch ? (
+            <DispatchView
+              day={anchor}
+              vehicles={vehicles}
+              appointments={appointments}
+              buffers={buffers}
+              now={now}
+              onTapSlot={(d) => openSheetAt(d)}
+              onTapAppointment={(a) => setOpenDetailId(a.id)}
+              onMoveAttempt={onMoveAttempt}
+              validateProposal={validateProposal}
+              onReassign={(id, vehicleId) =>
+                mutations.reassignVehicle.mutate({ id, vehicleId })
+              }
             />
           ) : apptQuery.isLoading ? (
             <p className="px-4 py-6 text-sm text-gray-500">Loading calendar…</p>

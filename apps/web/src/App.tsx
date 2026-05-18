@@ -18,6 +18,9 @@ import SettingsPaymentsRoute from './routes/settings/payments';
 import SettingsBillingRoute from './routes/settings/billing';
 import SettingsSmsRoute from './routes/settings/sms';
 import SettingsGoogleCalendarRoute from './routes/settings/integrations/google-calendar';
+import SettingsGoogleCalendarOperationsRoute from './routes/settings/integrations/google-calendar-operations';
+import VehiclesSettingsRoute from './routes/settings/vehicles';
+import PayrollRoute from './routes/payroll/index';
 import CalendarRoute from './routes/calendar';
 import SignupBillingRoute from './routes/signup/billing';
 import SignupBillingSuccessRoute from './routes/signup/billing-success';
@@ -187,6 +190,30 @@ export default function App(): JSX.Element {
               element={
                 <Authed>
                   <SettingsGoogleCalendarRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/settings/integrations/google-calendar/operations"
+              element={
+                <Authed>
+                  <SettingsGoogleCalendarOperationsRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/settings/vehicles"
+              element={
+                <Authed>
+                  <VehiclesSettingsRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/payroll"
+              element={
+                <Authed>
+                  <PayrollRoute />
                 </Authed>
               }
             />

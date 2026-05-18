@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuthOptional } from '../../../lib/auth-context';
 import {
   disconnectGcal,
   fetchGcalStatus,
@@ -23,6 +24,9 @@ const STATUS_BANNERS: Record<string, { tone: 'success' | 'warn'; text: string }>
 };
 
 export default function SettingsGoogleCalendarRoute(): JSX.Element {
+  const auth = useAuthOptional();
+  const plan = auth?.session?.tenant.plan ?? 'starter';
+  const isBusiness = plan === 'business';
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();
   const statusParam = searchParams.get('status');
@@ -109,6 +113,20 @@ export default function SettingsGoogleCalendarRoute(): JSX.Element {
               }}
             />
           )}
+
+          {isBusiness ? (
+            <Link
+              to="/settings/integrations/google-calendar/operations"
+              data-testid="ops-calendar-link"
+              className="block rounded-lg border border-gray-200 p-4 text-sm hover:bg-gray-50"
+            >
+              <p className="text-base font-semibold">Operations calendar</p>
+              <p className="mt-1 text-gray-600">
+                Every appointment across your team will mirror to this calendar. Useful for
+                seeing your full schedule in one place.
+              </p>
+            </Link>
+          ) : null}
 
           <div className="space-y-3 rounded-lg border border-gray-200 p-4 text-sm">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">

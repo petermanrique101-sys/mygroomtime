@@ -38,8 +38,8 @@ Process discipline:
 | 10 | Stripe twin + adapter + subscription billing + webhooks | ✅ done, committed |
 | 11 | Public booking page (read-only) with subdomain routing | ✅ done, committed |
 | 12 | Public booking submit + Stripe Connect deposit | ✅ done, committed |
-| **13** | **Tier upgrade/downgrade + Stripe Customer Portal** | **← next, prompt in `NEXT_CHUNK.md`** |
-| 14 | Twin: Twilio + adapter + outbound SMS | pending |
+| 13 | Tier upgrade/downgrade + Stripe Customer Portal | ✅ done, committed |
+| **14** | **Twin: Twilio + adapter + outbound SMS + booking confirmation SMS** | **← next** |
 | 15 | Scheduled SMS jobs (48h, 2h, post-appt) | pending |
 | 16 | Route optimization + day route view | pending |
 | 17 | Recurring appointments | pending |
@@ -70,6 +70,20 @@ Plan enum: `unpaid | starter | pro | business | past_due | canceled`.
 - **Pro** ($99): public booking page enabled, route optimization, recurring, GCal sync.
 - **Business** ($149): + multi-vehicle dispatch + payroll splits.
 - Public booking page: `starter`/`unpaid`/`canceled` → 404; `past_due` → render with disabled Book button; `pro`/`business` → normal.
+
+### Tier upgrade/downgrade + proration (chunk 13)
+- **Tier flip is webhook-canonical, not route-canonical.** `POST /settings/billing/change-plan` returns 202 + `{ pending: true, willTakeEffect: 'webhook' }`. The actual `Tenant.plan` mutation lives in the `customer.subscription.updated` handler. Web polls `GET /settings/billing` every 2s after confirm until the plan flips.
+- **Proration is shown before confirm.** Two-step UX: `POST /settings/billing/preview-plan-change` calls Stripe's upcoming-invoice endpoint, returns `{ amountDueCents, creditCents, chargeCents, nextChargeCents, currentPeriodEndIso }`. Modal renders "Today: $X. Then: $Y/mo starting on <date>." Customer can read it and back out.
+- **Downgrade is non-destructive.** No existing data is touched. Locked as comments in the plan-state code:
+  - Future-dated appointments stay (the grooming was paid for).
+  - Recurring series (chunk 17) finish naturally; new ones are blocked once `plan='starter'`.
+  - Pending `BookingPageRequest` rows expire normally; no refund flow on downgrade.
+  - The public booking page just 404s for new submits via chunk-11's tier gate.
+- **Block plan changes when `Tenant.plan` is `past_due` / `canceled` / `unpaid`.** They must resolve billing first via chunk-10 flows.
+- **No-op plan changes (same tier → same tier) reject at 400.** Don't roundtrip Stripe.
+- **Customer Portal is a separate concern.** Portal handles card updates + cancel-at-period-end. Tier moves use our own change-plan route because we want to own the proration preview UX. Portal *can* do tier changes too, but we don't route customers there for that.
+- **`Tenant.stripeSubscriptionItemId`** added in `20260518000000_tenant_subscription_item_and_plan_history`. `subscriptions.update` wants the item id, not just the price id, so we cache it. Backfill at signup (already wired for new tenants); the migration includes a one-time pull for existing rows.
+- **`TenantPlanChange` audit table** records every tier flip with `fromPlan`, `toPlan`, `prorationAmountCents`, `createdAt`. Chunk 22 (operator log) will surface this.
 
 ### Stripe Connect + public booking submit (chunk 12)
 - Connect onboarding is **lazy** — first visit to `/settings/payments` creates the connected account. Don't bake this into signup.
@@ -227,6 +241,15 @@ Tenants don't get a Vehicle on signup. `ensureDefaultVehicle(tenantId)` lazy-cre
 - `Tenant.phone` added in migration.
 - 13 new api tests, 10 subdomain tests, 5 public web tests. 117 api tests total.
 
+### Chunk 13 — Tier upgrade/downgrade + Customer Portal
+- Twin: `POST /v1/billing_portal/sessions`, `POST /v1/invoices/upcoming` (simple linear-proration computation: `credit = currentPrice * (timeRemaining/period); charge = newPrice * (timeRemaining/period); amount_due = max(0, charge - credit)`), idempotency wired into `POST /v1/subscriptions/:id` so retried updates produce one effect.
+- Adapter: `previewPlanChange`, `changePlan`, `createPortalSession` in both live + twin. Idempotency key for change-plan is `tenantId:${ts-bucketed-to-5min}` — accidental double-clicks within 5min are one call; after the bucket rolls, retries get a fresh key because proration math will have shifted.
+- Schema: `Tenant.stripeSubscriptionItemId`, `Tenant.lastPlanChangeAt`, new `TenantPlanChange` table (id, tenantId, fromPlan, toPlan, prorationAmountCents, createdAt). Migration: `20260518000000_tenant_subscription_item_and_plan_history`. Backfill at signup is automatic from chunk-10 wiring; the migration's one-time backfill handles existing rows.
+- API: `apps/api/src/routes/settings/billing.ts` (GET billing summary + preview + change-plan + portal-session). Idempotency key per change-plan call. Returns 202; webhook does the canonical flip.
+- Webhook: `subscription-updated.ts` extended with `priceIdToPlan` mapping from env price IDs → PlanTier. Records a TenantPlanChange row + updates `Tenant.plan` + `lastPlanChangeAt`. Idempotent via chunk-10 `UNIQUE(source, eventId)`.
+- Web: `/settings/billing` page — current-plan card + 3-tier matrix + two-step preview/confirm modal. After confirm, polls GET /settings/billing every 2s for up to 30s to reflect the tier flip. Customer Portal button → window.location.href to Stripe-hosted portal URL.
+- Pre-existing `conflict.test.ts` flake: `plus()` was now-relative; offsets > a few hours could cross midnight, and `canPlaceAppointment` only buffers same-day neighbors → spurious pass. Pre-flight cleanup (chunk 13 → 14): anchor `plus()` to next-non-Sunday 10am; the "past" test uses a literal `Date.now() - 60min`.
+
 ### Chunk 12 — Connect onboarding + public booking submit
 - Stripe Connect onboarding is **lazy**: connected account created on first visit to `/settings/payments`. Onboarding URL redirects to Stripe (twin auto-completes in dev), returns to the same page. `account.updated` webhook syncs `Tenant.stripeConnectChargesEnabled`/`payoutsEnabled`. The GET endpoint refetches `getConnectAccount` on every load so post-redirect state feels instant even if the webhook hasn't arrived.
 - Submit flow: form → geocode customer address inline → re-validate slot with **real customer coords** via `canPlaceAppointment` → create `BookingPageRequest pending_payment` → create payment intent on the connected account → return `{ bookingRequestId, clientSecret }` to the Payment Element. The chunk-11 depot-coord stand-in is no longer load-bearing for submit — every booking re-checks with real coords.
@@ -277,6 +300,7 @@ These landed as discrete edits between chunks. Listed so future debugging doesn'
 | chunk 8 → 9 | `Tenant.defaultBufferMinutes Int @default(15)` migration (actually landed inside chunk 9, not as separate pre-flight) |
 | chunk 10 → 11 | 3 lint errors in chunk 10 files fixed post-recap (`app.ts` import type, `form-body.ts` unused var, `app.test.ts` any-typing) |
 | chunk 12 → 13 | Stale chunk-10 guard test removed (`stripe.test.ts` asserting live Connect throws "not implemented"); `submit.test.ts` palette-color fix (`#000000` → `#6b7280`); `submit.test.ts` split into 3 files for 400-LOC; `apps/api/vitest.config.ts` `fileParallelism: false` after the split |
+| chunk 13 → 14 | `conflict.test.ts` time-of-day flake fixed: `plus()` anchored to next-non-Sunday 10am so future-time offsets don't cross midnight (was failing in evenings); "past" test switched to a literal `Date.now() - 60min` |
 
 ---
 

@@ -34,10 +34,16 @@ function fakeGmaps(durationSec: number, throws = false): GmapsAdapter {
   };
 }
 
-function plus(minutesFromNow: number): Date {
+// why: anchor future-time test cases at the next non-Sunday 10am so two
+// appointments separated by a few hours always land on the same calendar day.
+// canPlaceAppointment only buffers against same-day neighbors; a now-relative
+// base time was flaky in evenings when offsets crossed midnight.
+function plus(minutesOffset: number): Date {
   const d = new Date();
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + minutesFromNow);
+  d.setDate(d.getDate() + 2);
+  while (d.getDay() === 0) d.setDate(d.getDate() + 1);
+  d.setHours(10, 0, 0, 0);
+  d.setMinutes(d.getMinutes() + minutesOffset);
   return d;
 }
 
@@ -102,11 +108,12 @@ describe('canPlaceAppointment', () => {
 
   it('past — rejects a start in the past', async () => {
     const scoped = db.forTenant(tenant.tenantId);
+    const sixtyMinAgo = new Date(Date.now() - 60 * 60_000);
     const res = await canPlaceAppointment({
       scoped,
       vehicleId,
       appointmentId: null,
-      start: plus(-60),
+      start: sixtyMinAgo,
       durationMin: 90,
       gmaps: fakeGmaps(600),
       defaultBufferMin: 15,

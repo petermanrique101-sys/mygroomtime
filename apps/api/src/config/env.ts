@@ -42,6 +42,7 @@ export type AppEnv = {
   webOrigin: string;
   cookieSecret: string;
   magicLinkSecret: string;
+  rescheduleTokenSecret: string;
   redisUrl: string;
   stripe: StripeEnv;
   twilio: TwilioEnv;
@@ -78,6 +79,7 @@ export function loadEnv(): AppEnv {
     webOrigin: process.env.WEB_ORIGIN ?? 'http://localhost:5173',
     cookieSecret: required('COOKIE_SECRET', devFallback),
     magicLinkSecret: required('MAGIC_LINK_SECRET', devFallback),
+    rescheduleTokenSecret: required('RESCHEDULE_TOKEN_SECRET', devFallback),
     redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
     stripe: {
       mode: pickMode('STRIPE_MODE', defaultMode),

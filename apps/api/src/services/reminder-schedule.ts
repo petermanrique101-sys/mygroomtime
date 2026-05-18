@@ -14,6 +14,7 @@ export type ReminderAppointment = {
 };
 
 export type ReminderTimestamps = {
+  sevenD: Date | null;
   fortyEightH: Date | null;
   twoH: Date | null;
   post: Date | null;
@@ -21,6 +22,7 @@ export type ReminderTimestamps = {
 
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
+const SEVEN_D = 7 * 24 * HOUR;
 const FORTY_EIGHT_H = 48 * HOUR;
 const TWO_H = 2 * HOUR;
 const POST_OFFSET_H = 24 * HOUR;
@@ -37,11 +39,13 @@ export function computeReminderTimestamps(
   const end = start + appointment.durationMin * MIN;
   const nowMs = now.getTime();
 
+  const sevenD = start - SEVEN_D;
   const fortyEight = start - FORTY_EIGHT_H;
   const two = start - TWO_H;
   const post = end + POST_OFFSET_H;
 
   return {
+    sevenD: sevenD > nowMs ? new Date(sevenD) : null,
     fortyEightH: fortyEight > nowMs ? new Date(fortyEight) : null,
     twoH: two > nowMs ? new Date(two) : null,
     post: post > nowMs ? new Date(post) : null,
@@ -49,6 +53,7 @@ export function computeReminderTimestamps(
 }
 
 const NAME_TO_FIELD: Record<ReminderJobName, keyof ReminderTimestamps> = {
+  'reminder-7d': 'sevenD',
   'reminder-48h': 'fortyEightH',
   'reminder-2h': 'twoH',
   'reminder-post': 'post',

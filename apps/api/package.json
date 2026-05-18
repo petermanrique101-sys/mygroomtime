@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:fire-reminder": "tsx scripts/fire-reminder.ts",
+    "dev:fire-materialization": "dotenv -e ../../.env -- tsx scripts/fire-materialization.ts",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

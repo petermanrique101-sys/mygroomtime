@@ -1,5 +1,7 @@
 import { db, AppointmentStatus, type Appointment, type Client, type Pet } from '@mygroomtime/db';
 import type { StripeAdapter } from '../adapters/stripe/index.js';
+import type { MutationContext } from '../middleware/mutation-dedupe.js';
+import { stripeIdempotencyKey } from './stripe-idempotency.js';
 import { assertTransitionAllowed, TransitionError } from './status-transitions.js';
 
 export type CompleteAppointmentInput = {
@@ -7,6 +9,10 @@ export type CompleteAppointmentInput = {
   tenantId: string;
   tipCents: number;
   stripe: StripeAdapter;
+  // why: when this call arrives through the offline-replay path, the route handler passes
+  // the mutation context so the Stripe idempotency key shifts from `complete-{id}` to
+  // `mut-{uuid}`. Identical replays produce one PI on the wire either way.
+  mutation?: MutationContext | undefined;
 };
 
 type ApptWithRels = Appointment & { client: Client; pet: Pet };
@@ -114,7 +120,7 @@ export async function completeAppointment(
             depositChargeId: existing.depositChargeId,
             kind: 'balance',
           },
-          idempotencyKey: `complete-${existing.id}`,
+          idempotencyKey: stripeIdempotencyKey(input.mutation, `complete-${existing.id}`),
         });
         balanceChargeId = pi.id;
         if (input.stripe.mode === 'twin') {

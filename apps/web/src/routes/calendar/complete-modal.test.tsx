@@ -20,6 +20,8 @@ function makeAppt(overrides: Partial<AppointmentOutput> = {}): AppointmentOutput
     serviceId: 'svc-1',
     vehicleId: 'veh-1',
     groomerId: 'u-1',
+    recurringSeriesId: null,
+    recurringSeriesActive: null,
     serviceNameSnapshot: 'Full Groom',
     servicePriceCentsSnapshot: 8500,
     serviceDepositCentsSnapshot: 2000,

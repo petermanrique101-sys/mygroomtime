@@ -4,6 +4,11 @@ import type { EmailAdapter } from '../adapters/email/index.js';
 import type { Adapters } from '../adapters/index.js';
 import type { AppEnv } from '../config/env.js';
 import type { ReminderQueue, ReminderWorker } from '../queue/connection.js';
+import type {
+  MaterializeQueue,
+  MaterializeWorker,
+} from '../queue/materialize-connection.js';
+import type { MutationContext } from '../middleware/mutation-dedupe.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -13,6 +18,8 @@ declare module 'fastify' {
     emailAdapter: EmailAdapter;
     reminderQueue: ReminderQueue | null;
     reminderWorker: ReminderWorker | null;
+    materializeQueue: MaterializeQueue | null;
+    materializeWorker: MaterializeWorker | null;
   }
   interface FastifyRequest {
     auth?: {
@@ -21,5 +28,6 @@ declare module 'fastify' {
       sid: string;
     };
     rawBody?: Buffer;
+    mutation?: MutationContext;
   }
 }

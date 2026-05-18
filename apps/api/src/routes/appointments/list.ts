@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '@mygroomtime/db';
-import type { Appointment, Client, Pet } from '@mygroomtime/db';
+import type { Appointment, Client, Pet, RecurringSeries } from '@mygroomtime/db';
 import {
   AppointmentRangeQuerySchema,
   type AppointmentListResponse,
@@ -10,7 +10,11 @@ import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
 import { serializeAppointment } from './serialize.js';
 
 type Query = { from?: string; to?: string };
-type WithRelations = Appointment & { client: Client; pet: Pet };
+type WithRelations = Appointment & {
+  client: Client;
+  pet: Pet;
+  recurringSeries: RecurringSeries | null;
+};
 
 export default async function listAppointmentsRoute(app: FastifyInstance): Promise<void> {
   app.get(
@@ -33,7 +37,7 @@ export default async function listAppointmentsRoute(app: FastifyInstance): Promi
       const rows = (await scoped.appointment.findMany({
         where: { scheduledStart: { gte: from, lt: to } },
         orderBy: { scheduledStart: 'asc' },
-        include: { client: true, pet: true },
+        include: { client: true, pet: true, recurringSeries: true },
       })) as WithRelations[];
 
       const body: AppointmentListResponse = {

@@ -3,6 +3,7 @@ import { db, type CoatType } from '@mygroomtime/db';
 import { ClientCreateRequestSchema, type ClientMutationResponse } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { geocodeOnWrite } from './geocode-address.js';
 import { findActivePets } from './find.js';
 import { serializeClientWithPets } from './serialize.js';
@@ -14,7 +15,13 @@ function toCoatType(value: string): CoatType {
 export default async function createClientRoute(app: FastifyInstance): Promise<void> {
   app.post(
     '/clients',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'client' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const parsed = ClientCreateRequestSchema.safeParse(request.body);

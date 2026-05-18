@@ -116,7 +116,7 @@ describe('enqueueAppointmentReminders', () => {
     expect(jp?.opts.delay).toBe(72 * HOUR + 90 * MIN + 24 * HOUR);
   });
 
-  it('skips the 48h job for a <48h appointment but enqueues 2h + post', async () => {
+  it('skips the 7d + 48h jobs for a <48h appointment but enqueues 2h + post', async () => {
     const now = new Date('2026-05-17T12:00:00.000Z');
     const start = new Date(now.getTime() + 24 * HOUR);
     const out = await enqueueAppointmentReminders(
@@ -127,7 +127,23 @@ describe('enqueueAppointmentReminders', () => {
       now,
     );
     expect(out.enqueued.sort()).toEqual(['reminder-2h', 'reminder-post']);
-    expect(out.skipped).toEqual(['reminder-48h']);
+    expect(out.skipped.sort()).toEqual(['reminder-48h', 'reminder-7d']);
+  });
+
+  it('enqueues 7-day reminder when appointment is more than 7 days out', async () => {
+    const now = new Date('2026-05-17T12:00:00.000Z');
+    const start = new Date(now.getTime() + 10 * 24 * HOUR);
+    const out = await enqueueAppointmentReminders(
+      queue,
+      { id: 'appt-far-out', scheduledStart: start, durationMin: 90 },
+      'tenant-x',
+      true,
+      now,
+    );
+    expect(out.enqueued).toContain('reminder-7d');
+    const j7 = await queue.getJob(reminderJobId('reminder-7d', 'appt-far-out'));
+    // delay = start - now - 7d = 3 days
+    expect(j7?.opts.delay).toBe(3 * 24 * HOUR);
   });
 });
 

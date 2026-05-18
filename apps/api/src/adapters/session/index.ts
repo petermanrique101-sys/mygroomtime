@@ -12,6 +12,8 @@ export interface SessionStore {
   destroy(sid: string): Promise<void>;
   recordMagicJti(jti: string, ttlSec: number): Promise<void>;
   consumeMagicJti(jti: string): Promise<boolean>;
+  recordRescheduleJti(jti: string, ttlSec: number): Promise<void>;
+  consumeRescheduleJti(jti: string): Promise<boolean>;
   close(): Promise<void>;
 }
 

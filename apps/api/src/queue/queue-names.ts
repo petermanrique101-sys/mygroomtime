@@ -1,6 +1,11 @@
 export const REMINDER_QUEUE = 'sms-reminders';
 
-export const REMINDER_JOB_NAMES = ['reminder-48h', 'reminder-2h', 'reminder-post'] as const;
+export const REMINDER_JOB_NAMES = [
+  'reminder-7d',
+  'reminder-48h',
+  'reminder-2h',
+  'reminder-post',
+] as const;
 export type ReminderJobName = (typeof REMINDER_JOB_NAMES)[number];
 
 export type ReminderJobData = {
@@ -13,3 +18,10 @@ export type ReminderJobData = {
 export function reminderJobId(name: ReminderJobName, appointmentId: string): string {
   return `${name}.${appointmentId}`;
 }
+
+export const MATERIALIZE_QUEUE = 'recurring-materialize';
+
+export const MATERIALIZE_JOB_NAME = 'walk-due-series' as const;
+export type MaterializeJobName = typeof MATERIALIZE_JOB_NAME;
+
+export type MaterializeJobData = { tick: number };

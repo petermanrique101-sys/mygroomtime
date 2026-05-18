@@ -72,6 +72,11 @@ enum BookingRequestStatus {
   promoted
 }
 
+enum MutationLogStatus {
+  processed
+  failed
+}
+
 model Tenant {
   id                       String    @id @default(cuid())
   slug                     String    @unique
@@ -110,6 +115,7 @@ model Tenant {
   bookingPageRequests BookingPageRequest[]
   smsMessages         SmsMessage[]
   planChanges         TenantPlanChange[]
+  mutationLogs        MutationLog[]
 }
 
 model TenantPlanChange {
@@ -142,6 +148,7 @@ model User {
   vehiclesAssigned  Vehicle[]     @relation("VehicleAssignedGroomer")
   appointments      Appointment[] @relation("AppointmentGroomer")
   preferredByClients Client[]     @relation("ClientPreferredGroomer")
+  mutationLogs      MutationLog[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -274,6 +281,7 @@ model Appointment {
   finalAmountCents  Int?
   notes             String            @default("")
   mutationUuid      String?           @unique
+  rescheduledFromAppointmentId String?
   canceledAt        DateTime?
   onTheWayAt        DateTime?
   startedAt         DateTime?
@@ -295,19 +303,24 @@ model Appointment {
   @@index([tenantId, scheduledStart])
   @@index([tenantId, status, scheduledStart])
   @@index([tenantId, completedAt])
+  @@index([rescheduledFromAppointmentId])
 }
 
 model RecurringSeries {
-  id            String   @id @default(cuid())
-  tenantId      String
-  clientId      String
-  petId         String
-  serviceId     String
-  intervalWeeks Int
-  nextDueDate   DateTime
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                                String    @id @default(cuid())
+  tenantId                          String
+  clientId                          String
+  petId                             String
+  serviceId                         String
+  intervalWeeks                     Int
+  nextDueDate                       DateTime
+  active                            Boolean   @default(true)
+  pausedAt                          DateTime?
+  pauseReason                       String?
+  nextMaterializationAttemptAt      DateTime?
+  consecutiveFailedMaterializations Int       @default(0)
+  createdAt                         DateTime  @default(now())
+  updatedAt                         DateTime  @updatedAt
 
   tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -317,6 +330,7 @@ model RecurringSeries {
 
   @@index([tenantId])
   @@index([tenantId, active, nextDueDate])
+  @@index([active, nextDueDate])
 }
 
 model BookingPageRequest {
@@ -395,4 +409,24 @@ model WebhookEvent {
 
   @@unique([source, eventId])
   @@index([status])
+}
+
+model MutationLog {
+  id                String            @id
+  tenantId          String
+  userId            String?
+  endpoint          String
+  resourceType      String
+  resourceId        String?
+  status            MutationLogStatus
+  statusCode        Int
+  failureReason     String?
+  resultPayloadJson Json?
+  createdAt         DateTime          @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, resourceType, resourceId])
 }

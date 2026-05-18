@@ -152,6 +152,8 @@ export const AppointmentOutputSchema = z.object({
   serviceId: z.string(),
   vehicleId: z.string().nullable(),
   groomerId: z.string().nullable(),
+  recurringSeriesId: z.string().nullable(),
+  recurringSeriesActive: z.boolean().nullable(),
   serviceNameSnapshot: z.string(),
   servicePriceCentsSnapshot: z.number().int(),
   serviceDepositCentsSnapshot: z.number().int(),
@@ -243,6 +245,8 @@ export const RecurringSeriesOutputSchema = z.object({
   intervalWeeks: z.number().int().min(1).max(26),
   nextDueDate: z.string(),
   active: z.boolean(),
+  pausedAt: z.string().nullable().optional(),
+  pauseReason: z.string().nullable().optional(),
 });
 export type RecurringSeriesOutput = z.infer<typeof RecurringSeriesOutputSchema>;
 

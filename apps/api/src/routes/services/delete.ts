@@ -3,6 +3,7 @@ import { db } from '@mygroomtime/db';
 import type { ServiceMutationResponse } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { findAnyService } from './find.js';
 import { serializeService } from './serialize.js';
 
@@ -11,7 +12,13 @@ type Params = { id: string };
 export default async function deleteServiceRoute(app: FastifyInstance): Promise<void> {
   app.delete(
     '/services/:id',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'service' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const { id } = request.params as Params;
@@ -34,7 +41,13 @@ export default async function deleteServiceRoute(app: FastifyInstance): Promise<
 
   app.post(
     '/services/:id/restore',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'service' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const { id } = request.params as Params;

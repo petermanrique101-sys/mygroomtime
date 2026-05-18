@@ -9,6 +9,7 @@ import type {
   BookingPageRequest,
   SmsMessage,
   User,
+  MutationLog,
 } from '@prisma/client';
 
 type StripTenant<T> = Omit<T, 'tenantId' | 'tenant'>;
@@ -211,6 +212,24 @@ export type ScopedUser = ScopedFind<
     Prisma.UserDeleteManyArgs
   >;
 
+export type ScopedMutationLog = ScopedFind<
+  MutationLog,
+  Prisma.MutationLogFindManyArgs,
+  Prisma.MutationLogFindFirstArgs,
+  Prisma.MutationLogCountArgs
+> &
+  ScopedWrite<
+    MutationLog,
+    Prisma.MutationLogCreateArgs,
+    Prisma.MutationLogCreateManyArgs,
+    Prisma.MutationLogUncheckedCreateInput,
+    Prisma.MutationLogCreateManyInput,
+    Prisma.MutationLogUpdateArgs,
+    Prisma.MutationLogUpdateManyArgs,
+    Prisma.MutationLogDeleteArgs,
+    Prisma.MutationLogDeleteManyArgs
+  >;
+
 export interface TenantScopedDb {
   readonly tenantId: string;
   client: ScopedClient;
@@ -222,4 +241,5 @@ export interface TenantScopedDb {
   bookingPageRequest: ScopedBookingPageRequest;
   smsMessage: ScopedSmsMessage;
   user: ScopedUser;
+  mutationLog: ScopedMutationLog;
 }

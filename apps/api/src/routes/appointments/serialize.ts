@@ -1,12 +1,16 @@
-import type { Appointment, Client, Pet } from '@mygroomtime/db';
+import type { Appointment, Client, Pet, RecurringSeries } from '@mygroomtime/db';
 import type { AppointmentOutput } from '@mygroomtime/shared';
+
+export type AppointmentWithMaybeSeries = Appointment & {
+  recurringSeries?: RecurringSeries | null;
+};
 
 export function computeEnd(start: Date, durationMin: number): Date {
   return new Date(start.getTime() + durationMin * 60_000);
 }
 
 export function serializeAppointment(
-  a: Appointment,
+  a: AppointmentWithMaybeSeries,
   pet: Pet,
   client: Client,
 ): AppointmentOutput {
@@ -27,6 +31,11 @@ export function serializeAppointment(
     serviceId: a.serviceId,
     vehicleId: a.vehicleId,
     groomerId: a.groomerId,
+    recurringSeriesId: a.recurringSeriesId,
+    recurringSeriesActive:
+      a.recurringSeries === null || a.recurringSeries === undefined
+        ? null
+        : a.recurringSeries.active,
     serviceNameSnapshot: a.serviceNameSnapshot,
     servicePriceCentsSnapshot: a.servicePriceCentsSnapshot,
     serviceDepositCentsSnapshot: a.serviceDepositCentsSnapshot,

@@ -7,6 +7,8 @@ import type {
 import {
   cancelAppointment,
   createAppointment,
+  pauseRecurringSeries,
+  resumeRecurringSeries,
   updateAppointment,
 } from '../../lib/appointments-api';
 
@@ -25,6 +27,8 @@ export type CalendarMutationsApi = {
     { id: string; start: Date },
     { previous: AppointmentOutput[] | undefined }
   >;
+  pauseSeries: UseMutationResult<unknown, Error, string, unknown>;
+  resumeSeries: UseMutationResult<unknown, Error, string, unknown>;
 };
 
 type Args = {
@@ -122,5 +126,31 @@ export function useCalendarMutations(args: Args): CalendarMutationsApi {
     },
   });
 
-  return { create, cancel, notes, reschedule };
+  const pauseSeries = useMutation({
+    mutationFn: async (seriesId: string) => {
+      const res = await pauseRecurringSeries(seriesId);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    onSuccess: () => {
+      refresh();
+      args.onToast('Recurring series paused.');
+    },
+    onError: (err) => args.onToast((err as Error).message),
+  });
+
+  const resumeSeries = useMutation({
+    mutationFn: async (seriesId: string) => {
+      const res = await resumeRecurringSeries(seriesId);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    onSuccess: () => {
+      refresh();
+      args.onToast('Recurring series resumed.');
+    },
+    onError: (err) => args.onToast((err as Error).message),
+  });
+
+  return { create, cancel, notes, reschedule, pauseSeries, resumeSeries };
 }

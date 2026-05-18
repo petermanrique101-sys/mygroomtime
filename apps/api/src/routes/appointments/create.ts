@@ -7,6 +7,7 @@ import {
 } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import {
   ensureDefaultVehicle,
   findActiveAppointment,
@@ -22,7 +23,13 @@ import { enqueueAppointmentReminders } from '../../services/reminder-schedule.js
 export default async function createAppointmentRoute(app: FastifyInstance): Promise<void> {
   app.post(
     '/appointments',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'appointment' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const parsed = AppointmentCreateRequestSchema.safeParse(request.body);

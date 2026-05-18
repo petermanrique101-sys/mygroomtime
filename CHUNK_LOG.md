@@ -41,9 +41,10 @@ Process discipline:
 | 13 | Tier upgrade/downgrade + Stripe Customer Portal | ✅ done, committed |
 | 14 | Twin: Twilio + adapter + outbound SMS + booking confirmation SMS | ✅ done, committed |
 | 15 | Scheduled SMS jobs (48h, 2h, post-appt) via BullMQ | ✅ done, committed |
-| **16** | **Route optimization + day route view** | **← next, prompt in `NEXT_CHUNK.md`** |
-| 17 | Recurring appointments | pending |
-| 18 | Offline support (PWA, mutation queue) | pending |
+| 16 | Route optimization + day route view | ✅ done, committed |
+| 16.5 | Appointment lifecycle + complete + rebook | ✅ done, committed |
+| 17 | Recurring materialization + reschedule | ✅ done |
+| **18** | **Offline support (PWA, mutation queue)** | **← next** |
 | 19 | Owner dashboard | pending |
 | 20 | Twin: Google Calendar + two-way sync (Pro+) | pending |
 | 21 | Business tier: multi-vehicle dispatch + payroll splits | pending |
@@ -54,6 +55,20 @@ Process discipline:
 ## Cross-chunk policy decisions (not all in spec yet)
 
 These were locked in via chunk prompts. Honor them in future chunks.
+
+### Recurring materialization + customer reschedule (chunk 17)
+- **Materialization horizon = 14 days.** Nightly BullMQ repeat (`recurring-materialize` queue, cron `0 2 * * *`) walks `RecurringSeries` where `active AND nextDueDate <= now+14d AND (nextMaterializationAttemptAt IS NULL OR <= now)`. The walker (`materializeAllDueSeries`) iterates and calls `materializeOneSeries({seriesId,tenantId})` per row. Per-series throws are caught so a single bad row never aborts the walk.
+- **Auto-pause cases.** `pauseReason='source_deleted'` if `client.deletedAt` or `pet.deletedAt` is non-null at materialization time. `pauseReason='no_available_slot'` after `MAX_CONSECUTIVE_FAILED_MATERIALIZATIONS=7` consecutive `canPlaceAppointment` rejections; counter resets to 0 on a successful materialization or on owner resume. Owner pause is `pauseReason='owner_paused'` (chunk-17 detail-drawer button).
+- **Idempotency** is `(seriesId, nextDueDate)`. If an appointment exists with that exact `(recurringSeriesId, scheduledStart)`, the walker returns `skipped_already_materialized` and does NOT advance `nextDueDate` — that's owned by the next successful materialization.
+- **Snapshot source.** Latest completed appointment in the series → its snapshot. None yet → live `Service`. Locks future-instance pricing to the chain's first completed parent so service re-pricing doesn't drift downstream.
+- **7-day reminder is a new kind in the chunk-15 queue.** Same `REMINDER_QUEUE`, name `reminder-7d`, job id `reminder-7d.<appointmentId>`. Skipped at enqueue if the appointment is ≤7d away. Body: `Reminder from {tenant}: {pet}'s {service} is coming up on {dateTime}. Reply C to confirm, R to reschedule.` Long tenant/service names get the adapter's `…` truncation before the STOP suffix — the dispatcher matches `C`/`R` as exact-trimmed body, so a truncated footer doesn't break confirmations.
+- **Inbound dispatcher (`apps/api/src/services/inbound-sms-dispatch.ts`)** routes the inbound webhook with strict priority: STOP-set → RESCHEDULE (exact `R`/`r` OR substring `RESCHEDULE`) → confirm (`C`/`Y`/`YES` exact) → START/UNSTOP → fallback. The "recent appointment" lookup excludes `reminder-post:*` SmsMessage rows (post-appointment reviews shouldn't trigger reschedule links).
+- **Reschedule token** = jose JWT (`HS256`, `RESCHEDULE_TOKEN_SECRET`). Payload: `{ type: 'reschedule', appointmentId, tenantId }` + `jti`. Expires at `appointment.scheduledStart + 6h` grace. Single-use enforced via Redis-backed jti consume (new `SessionStore.recordRescheduleJti` / `consumeRescheduleJti` on both memory + redis stores).
+- **Reschedule commit order: signature → load → slot-check → consume-jti → swap.** A slot conflict at commit time returns 409 `slot_unavailable` and does NOT consume the jti (customer retries with a different slot). An already-used token returns 409 `already_used` with `linkedAppointmentId` so the page can render "your appointment is on {date}".
+- **Reschedule preserves `depositChargeId`.** The new appointment inherits it byte-for-byte; no new Stripe call is made. `Appointment.rescheduledFromAppointmentId` (new column) records the source for the already-used lookup path.
+- **Materialized appointments don't carry a deposit.** A series-materialized appointment is a fresh instance; the chunk-12 `depositChargeId` only exists when the public booking flow charged a deposit. Reschedule preserves whatever was there (commonly nothing).
+- **Cross-tenant access for the walk.** `db.global.recurringSeries` was added — explicitly documented as walker-only. Application code MUST go through `db.forTenant(tenantId).recurringSeries` for tenant-scoped reads.
+- **Owner pause is one button on the detail drawer.** `AppointmentOutput.recurringSeriesId` + `.recurringSeriesActive` (new fields) drive the badge. `POST /recurring-series/:id/pause` and `/resume` are owner-authed + `requirePaidPlan`-gated. Pause does NOT cancel already-materialized future instances — owner cancels those individually.
 
 ### Plan state machine (chunk 10)
 Plan enum: `unpaid | starter | pro | business | past_due | canceled`.
@@ -264,6 +279,20 @@ Tenants don't get a Vehicle on signup. `ensureDefaultVehicle(tenantId)` lazy-cre
 - 60 req/min rate limit per IP per slug on public endpoints.
 - `Tenant.phone` added in migration.
 - 13 new api tests, 10 subdomain tests, 5 public web tests. 117 api tests total.
+
+### Chunk 17 — Recurring materialization + customer reschedule
+- Schema: `20260526000000_recurring_series_pause_and_appointment_reschedule_link` adds `RecurringSeries.{pausedAt, pauseReason, nextMaterializationAttemptAt, consecutiveFailedMaterializations}` + `Appointment.rescheduledFromAppointmentId` + the cross-tenant `(active, nextDueDate)` index for the nightly walk.
+- Materialize service: `apps/api/src/services/materialize-series.ts` (`materializeOneSeries` — one row, full lifecycle) + `materialize-series-walk.ts` (`findDueSeries` + `materializeAllDueSeries` — the cross-tenant scan). Split because the combined file exceeded 400 LOC. The walker swallows per-row throws so a single bad series never aborts the night.
+- Queue: `apps/api/src/queue/{materialize-connection.ts, materialize-worker.ts}` with `MATERIALIZE_QUEUE='recurring-materialize'`. `createApp` registers a BullMQ repeat (`pattern: '0 2 * * *'`) so app boot is the only place the schedule is declared. Both reminder + materialize infra are skipped in test mode unless explicitly injected — same pattern as chunk 15.
+- 7-day reminder: `reminder-7d` added to `REMINDER_JOB_NAMES` + the worker dispatch + a body template. `computeReminderTimestamps` returns `sevenD: Date | null`. `enqueueAppointmentReminders` skips the 7d job when start - now ≤ 7d. Materialization explicitly re-enqueues via the same helper so far-future series instances get all four kinds.
+- Reschedule tokens: `apps/api/src/services/reschedule-tokens.ts` issues HS256 JWTs over `{appointmentId, tenantId, jti}`; jti recorded via the new `SessionStore.recordRescheduleJti` (memory + redis). The URL is built as `${scheme}://${tenantSlug}.${host}/public/reschedule/${token}` from `WEB_ORIGIN`.
+- Inbound dispatcher: `apps/api/src/services/inbound-sms-dispatch.ts` is the new hub. `routes/webhooks/twilio/index.ts` lost its inline STOP-only branching and now delegates everything to `dispatchInbound`. STOP behavior is unchanged (priority 1). The dispatcher hits all matching tenants when one phone is on multiple groomer rosters.
+- Public reschedule routes: `apps/api/src/routes/public/{reschedule-verify.ts, reschedule-commit.ts, reschedule-load.ts}` — the commit path runs `canPlaceAppointment` BEFORE consuming the jti so a conflict at commit-time leaves the token live. Already-used returns 409 with `linkedAppointmentId` (looked up via the new `rescheduledFromAppointmentId`). Inside the swap transaction: cancel old (status=canceled, canceledAt=now) + create new with the same `depositChargeId`, `recurringSeriesId`, snapshot fields, and `rescheduledFromAppointmentId=source.id`. Chunk-15 reminder remove + enqueue runs after the transaction commits.
+- Owner pause/resume: `apps/api/src/routes/recurring-series/index.ts` exposes `POST /recurring-series/:id/{pause,resume}`. `AppointmentOutput` now carries `recurringSeriesId` + `recurringSeriesActive` so the calendar detail drawer can render the "Recurring" badge + pause button without a separate fetch. `findActiveAppointment` includes the `recurringSeries` relation; `serializeAppointment` reads it via an optional `?? null` so call sites that don't load it (rebook short-path) still compile.
+- Web: `apps/web/src/routes/public/reschedule.tsx` is the customer-facing page (mobile-first, light mode, ≥44px tap targets) — verifies the token, reuses the chunk-11 `DatePicker` + a slot grid from chunk-11's `availability` endpoint, commits on tap, renders success / already-used / conflict states cleanly. Mounted on the public app at `/public/reschedule/:token`.
+- Web (groomer): detail-drawer gets a new `RecurringBadgeRow` (Pause series / Resume series button). `use-calendar-mutations` adds `pauseSeries` + `resumeSeries`.
+- Env / scripts: `RESCHEDULE_TOKEN_SECRET` added to `.env.example` + `loadEnv()`. New `pnpm --filter @mygroomtime/api dev:fire-materialization` script bypasses BullMQ and invokes the walker directly for local dev. Chunk-15's `dev:fire-reminder` script also registered in `apps/api/package.json` (was orphaned).
+- Tests: +27 new — `reschedule-tokens.test.ts` (5), `materialize-series.test.ts` (7), `inbound-sms-dispatch.test.ts` (9), `routes/public/reschedule.test.ts` (5), `materialize-loop.integration.test.ts` (1). Pre-existing `reminder-schedule.test.ts` updated for the 7d kind. 268 → 295 API tests pass; 63 web tests still pass.
 
 ### Chunk 15 — Scheduled SMS reminders via BullMQ
 - Queue + Worker factories in `apps/api/src/queue/`. Single source for queue name + job names + `reminderJobId(name, appointmentId)` helper using `.` separator (BullMQ rejects `:` in custom IDs).

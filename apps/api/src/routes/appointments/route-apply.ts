@@ -6,6 +6,7 @@ import {
 } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { rescheduleAppointmentReminders } from '../../services/reminder-schedule.js';
 
 const ACTIVE_STATUSES: AppointmentStatus[] = [
@@ -50,7 +51,13 @@ type Slot = { id: string; start: Date; durationMin: number };
 export default async function routeApplyRoute(app: FastifyInstance): Promise<void> {
   app.post(
     '/appointments/today/route/apply',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'route_apply' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
 

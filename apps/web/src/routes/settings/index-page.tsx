@@ -2,6 +2,11 @@ import { Link } from 'react-router-dom';
 
 const SECTIONS: { to: string; title: string; description: string }[] = [
   {
+    to: '/dashboard',
+    title: 'Dashboard',
+    description: 'Revenue, no-shows, top clients, and gaps to fill.',
+  },
+  {
     to: '/settings/services',
     title: 'Services',
     description: 'Service menu, prices, deposits, calendar colors.',

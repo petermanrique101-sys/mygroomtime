@@ -18,6 +18,8 @@ type Props = {
   onMarkNoShow: (id: string) => void;
   onOpenComplete: (a: AppointmentOutput) => void;
   onOpenRebook: (a: AppointmentOutput) => void;
+  onPauseSeries: (seriesId: string) => void;
+  onResumeSeries: (seriesId: string) => void;
   busy: boolean;
 };
 
@@ -44,6 +46,8 @@ export function DetailDrawer({
   onMarkNoShow,
   onOpenComplete,
   onOpenRebook,
+  onPauseSeries,
+  onResumeSeries,
   busy,
 }: Props): JSX.Element | null {
   const [notes, setNotes] = useState('');
@@ -188,6 +192,15 @@ export function DetailDrawer({
             )}
           </Row>
 
+          {appointment.recurringSeriesId ? (
+            <RecurringBadgeRow
+              active={appointment.recurringSeriesActive}
+              busy={busy}
+              onPause={() => onPauseSeries(appointment.recurringSeriesId!)}
+              onResume={() => onResumeSeries(appointment.recurringSeriesId!)}
+            />
+          ) : null}
+
           {appointment.status === 'completed' ? (
             <CompletedSummary
               completedAt={appointment.completedAt}
@@ -248,6 +261,51 @@ export function DetailDrawer({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function RecurringBadgeRow({
+  active,
+  busy,
+  onPause,
+  onResume,
+}: {
+  active: boolean | null;
+  busy: boolean;
+  onPause: () => void;
+  onResume: () => void;
+}): JSX.Element {
+  const isPaused = active === false;
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-3 text-sm">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="rounded bg-indigo-600 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
+          Recurring
+        </span>
+        <span className="text-xs text-indigo-900">
+          {isPaused ? 'Series is paused.' : 'Part of a recurring series.'}
+        </span>
+      </div>
+      {isPaused ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onResume}
+          className="min-h-[44px] rounded-lg bg-indigo-600 px-3 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          Resume series
+        </button>
+      ) : (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onPause}
+          className="min-h-[44px] rounded-lg border border-indigo-300 bg-white px-3 text-sm font-semibold text-indigo-700 disabled:opacity-50"
+        >
+          Pause series
+        </button>
+      )}
     </div>
   );
 }

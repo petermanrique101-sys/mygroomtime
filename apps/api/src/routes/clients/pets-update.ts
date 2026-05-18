@@ -3,6 +3,7 @@ import { db, type CoatType } from '@mygroomtime/db';
 import { PetUpdateSchema } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { findActiveClient, findActivePet } from './find.js';
 import { serializePet } from './serialize.js';
 
@@ -15,7 +16,13 @@ function toCoatType(value: string): CoatType {
 export default async function updatePetRoute(app: FastifyInstance): Promise<void> {
   app.patch(
     '/clients/:id/pets/:petId',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'pet' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const { id: clientId, petId } = request.params as Params;

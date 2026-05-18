@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '@mygroomtime/db';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { findActiveClient, findActivePet } from './find.js';
 
 type Params = { id: string; petId: string };
@@ -9,7 +10,13 @@ type Params = { id: string; petId: string };
 export default async function deletePetRoute(app: FastifyInstance): Promise<void> {
   app.delete(
     '/clients/:id/pets/:petId',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'pet' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const { id: clientId, petId } = request.params as Params;

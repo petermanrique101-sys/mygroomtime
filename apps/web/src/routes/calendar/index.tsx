@@ -7,6 +7,7 @@ import type {
   ServiceOutput,
 } from '@mygroomtime/shared';
 import { useAuthOptional } from '../../lib/auth-context';
+import { useLastSyncedLabel } from '../../lib/use-last-synced';
 import { RouteView } from './route-view';
 import { useRouteOptimization } from './use-route-optimization';
 import { CompleteModal } from './complete-modal';
@@ -116,6 +117,7 @@ export default function CalendarRoute(): JSX.Element {
     () => APPT_KEY(view, range.from.toISOString()),
     [view, range.from],
   );
+  const lastSyncedLabel = useLastSyncedLabel(apptQuery);
   const mutations = useCalendarMutations({
     apptQueryKey,
     onToast: setToast,
@@ -226,6 +228,9 @@ export default function CalendarRoute(): JSX.Element {
             </button>
           </div>
           <div className="flex gap-3">
+            <Link to="/dashboard" className="text-gray-600 underline">
+              Dashboard
+            </Link>
             <Link to="/clients" className="text-gray-600 underline">
               Clients
             </Link>
@@ -249,10 +254,14 @@ export default function CalendarRoute(): JSX.Element {
             />
           ) : apptQuery.isLoading ? (
             <p className="px-4 py-6 text-sm text-gray-500">Loading calendar…</p>
-          ) : apptQuery.isError ? (
-            <p className="px-4 py-6 text-sm text-red-600">
-              {(apptQuery.error as Error).message}
-            </p>
+          ) : apptQuery.isError && !apptQuery.data ? (
+            // why: when offline + no cache, the query is in error state and `data` is
+            // undefined. Show a calm "Offline — no cached data yet" instead of the red
+            // error string (which is alarming and tells the user nothing useful).
+            <OfflineEmptyState
+              message={(apptQuery.error as Error)?.message ?? null}
+              onRetry={() => void apptQuery.refetch()}
+            />
           ) : view === 'day' ? (
             <DayView
               day={anchor}
@@ -282,6 +291,11 @@ export default function CalendarRoute(): JSX.Element {
               }}
             />
           )}
+          {lastSyncedLabel ? (
+            <p className="px-4 py-2 text-center text-[11px] text-gray-500">
+              {lastSyncedLabel}
+            </p>
+          ) : null}
         </div>
 
         <NewAppointmentSheet
@@ -317,7 +331,15 @@ export default function CalendarRoute(): JSX.Element {
             setOpenDetailId(null);
             lifecycle.openRebook(a);
           }}
-          busy={cancelMut.isPending || notesMut.isPending || lifecycle.busy}
+          onPauseSeries={(seriesId) => mutations.pauseSeries.mutate(seriesId)}
+          onResumeSeries={(seriesId) => mutations.resumeSeries.mutate(seriesId)}
+          busy={
+            cancelMut.isPending ||
+            notesMut.isPending ||
+            mutations.pauseSeries.isPending ||
+            mutations.resumeSeries.isPending ||
+            lifecycle.busy
+          }
         />
 
         {lifecycle.modalAppointment ? (
@@ -337,5 +359,30 @@ export default function CalendarRoute(): JSX.Element {
         <Toast message={toast} onDismiss={() => setToast(null)} />
       </div>
     </main>
+  );
+}
+
+function OfflineEmptyState({
+  message,
+  onRetry,
+}: {
+  message: string | null;
+  onRetry: () => void;
+}): JSX.Element {
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  const text = offline
+    ? 'Offline — no cached data yet.'
+    : message ?? 'Could not load the calendar.';
+  return (
+    <div className="px-4 py-6 text-sm text-gray-700">
+      <p className="mb-3">{text}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="min-h-[40px] rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-800"
+      >
+        Try again
+      </button>
+    </div>
   );
 }

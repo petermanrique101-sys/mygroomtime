@@ -5,6 +5,7 @@ import type {
   ScopedAppointment,
   ScopedBookingPageRequest,
   ScopedClient,
+  ScopedMutationLog,
   ScopedPet,
   ScopedRecurringSeries,
   ScopedService,
@@ -29,6 +30,16 @@ export interface GlobalDb {
   tenant: PrismaClient['tenant'];
   webhookEvent: PrismaClient['webhookEvent'];
   tenantPlanChange: PrismaClient['tenantPlanChange'];
+  // why: cross-tenant access to RecurringSeries is needed for chunk-17's nightly
+  // materialization walk. Application code MUST NOT use this delegate for tenant-scoped
+  // reads — go through db.forTenant(tenantId).recurringSeries instead. The walker is the
+  // only legitimate caller.
+  recurringSeries: PrismaClient['recurringSeries'];
+  // why: chunk-18 mutation-dedupe middleware looks up MutationLog by primary key BEFORE it
+  // has resolved a request tenantId (it needs the row to short-circuit). Same justification
+  // as recurringSeries above. Application code should not bypass this either —
+  // db.forTenant(tenantId).mutationLog is the tenant-scoped surface.
+  mutationLog: PrismaClient['mutationLog'];
   $transaction: PrismaClient['$transaction'];
   $disconnect: PrismaClient['$disconnect'];
 }
@@ -37,6 +48,8 @@ const globalDb: GlobalDb = {
   tenant: prisma.tenant,
   webhookEvent: prisma.webhookEvent,
   tenantPlanChange: prisma.tenantPlanChange,
+  recurringSeries: prisma.recurringSeries,
+  mutationLog: prisma.mutationLog,
   $transaction: prisma.$transaction.bind(prisma),
   $disconnect: prisma.$disconnect.bind(prisma),
 };
@@ -76,6 +89,10 @@ function forTenant(tenantId: string): TenantScopedDb {
       tenantId,
     ) as unknown as ScopedSmsMessage,
     user: scopeDelegate(asDelegate(prisma.user), tenantId) as unknown as ScopedUser,
+    mutationLog: scopeDelegate(
+      asDelegate(prisma.mutationLog),
+      tenantId,
+    ) as unknown as ScopedMutationLog,
   };
 }
 

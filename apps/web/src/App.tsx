@@ -1,7 +1,8 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { AuthProvider } from './lib/auth-context';
+import { AuthProvider, useAuthOptional } from './lib/auth-context';
 import { AppQueryProvider } from './lib/query-client';
 import { BillingGuard, RequireAnon, RequireAuth } from './lib/route-guard';
+import { OfflineBanner } from './components/offline-banner';
 import LoginRoute from './routes/login';
 import SignupRoute from './routes/signup';
 import MagicLinkRoute from './routes/magic-link';
@@ -20,6 +21,11 @@ import CalendarRoute from './routes/calendar';
 import SignupBillingRoute from './routes/signup/billing';
 import SignupBillingSuccessRoute from './routes/signup/billing-success';
 import BillingRoute from './routes/billing/index';
+import DashboardRoute from './routes/dashboard';
+import DashboardRevenueRoute from './routes/dashboard/revenue';
+import DashboardNoShowsRoute from './routes/dashboard/no-shows';
+import DashboardTopClientsRoute from './routes/dashboard/top-clients';
+import DashboardGapsToFillRoute from './routes/dashboard/gaps-to-fill';
 
 function Authed({ children }: { children: JSX.Element }): JSX.Element {
   return (
@@ -29,11 +35,21 @@ function Authed({ children }: { children: JSX.Element }): JSX.Element {
   );
 }
 
+// why: only render the offline banner for authed groomer-app sessions. Public booking
+// pages stay strictly online (customers won't book from a dead zone — out-of-scope per
+// chunk 18). We could check subdomain here too but the auth gate is sufficient.
+function AuthedOfflineBanner(): JSX.Element | null {
+  const auth = useAuthOptional();
+  if (!auth?.session) return null;
+  return <OfflineBanner />;
+}
+
 export default function App(): JSX.Element {
   return (
     <AppQueryProvider>
       <AuthProvider>
         <BrowserRouter>
+          <AuthedOfflineBanner />
           <Routes>
             <Route
               path="/login"
@@ -162,6 +178,46 @@ export default function App(): JSX.Element {
               element={
                 <Authed>
                   <SettingsSmsRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <Authed>
+                  <DashboardRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/dashboard/revenue"
+              element={
+                <Authed>
+                  <DashboardRevenueRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/dashboard/no-shows"
+              element={
+                <Authed>
+                  <DashboardNoShowsRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/dashboard/top-clients"
+              element={
+                <Authed>
+                  <DashboardTopClientsRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/dashboard/gaps-to-fill"
+              element={
+                <Authed>
+                  <DashboardGapsToFillRoute />
                 </Authed>
               }
             />

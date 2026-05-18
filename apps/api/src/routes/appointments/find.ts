@@ -1,6 +1,16 @@
-import type { Appointment, Client, Pet, TenantScopedDb } from '@mygroomtime/db';
+import type {
+  Appointment,
+  Client,
+  Pet,
+  RecurringSeries,
+  TenantScopedDb,
+} from '@mygroomtime/db';
 
-export type AppointmentWithRelations = Appointment & { client: Client; pet: Pet };
+export type AppointmentWithRelations = Appointment & {
+  client: Client;
+  pet: Pet;
+  recurringSeries: RecurringSeries | null;
+};
 
 export async function findActiveAppointment(
   scoped: TenantScopedDb,
@@ -10,7 +20,7 @@ export async function findActiveAppointment(
   // through the wrapper — cast to the relation-augmented shape we know we asked for.
   const row = (await scoped.appointment.findFirst({
     where: { id },
-    include: { client: true, pet: true },
+    include: { client: true, pet: true, recurringSeries: true },
   })) as AppointmentWithRelations | null;
   return row;
 }

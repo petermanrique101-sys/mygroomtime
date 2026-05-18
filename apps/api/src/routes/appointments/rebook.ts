@@ -5,6 +5,7 @@ import {
 } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { serializeAppointment } from './serialize.js';
 import { rebookFromAppointment } from '../../services/rebook-appointment.js';
 
@@ -13,7 +14,13 @@ type Params = { id: string };
 export default async function appointmentRebookRoute(app: FastifyInstance): Promise<void> {
   app.post(
     '/appointments/:id/rebook',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'appointment' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const { id } = request.params as Params;
@@ -61,9 +68,13 @@ export default async function appointmentRebookRoute(app: FastifyInstance): Prom
           intervalWeeks: outcome.recurringSeries.intervalWeeks,
           nextDueDate: outcome.recurringSeries.nextDueDate.toISOString(),
           active: outcome.recurringSeries.active,
+          pausedAt: outcome.recurringSeries.pausedAt
+            ? outcome.recurringSeries.pausedAt.toISOString()
+            : null,
+          pauseReason: outcome.recurringSeries.pauseReason,
         },
         nextAppointment: serializeAppointment(
-          outcome.nextAppointment,
+          { ...outcome.nextAppointment, recurringSeries: outcome.recurringSeries },
           outcome.nextAppointment.pet,
           outcome.nextAppointment.client,
         ),

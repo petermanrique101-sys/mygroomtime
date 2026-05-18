@@ -3,12 +3,19 @@ import { db } from '@mygroomtime/db';
 import { ServiceInputSchema, type ServiceMutationResponse } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { serializeService } from './serialize.js';
 
 export default async function createServiceRoute(app: FastifyInstance): Promise<void> {
   app.post(
     '/services',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'service' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const parsed = ServiceInputSchema.safeParse(request.body);

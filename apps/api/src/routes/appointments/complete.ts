@@ -6,6 +6,7 @@ import {
 } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { findActiveAppointment } from './find.js';
 import { serializeAppointment } from './serialize.js';
 import { completeAppointment } from '../../services/complete-appointment.js';
@@ -16,7 +17,13 @@ type Params = { id: string };
 export default async function appointmentCompleteRoute(app: FastifyInstance): Promise<void> {
   app.post(
     '/appointments/:id/complete',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'appointment' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const { id } = request.params as Params;
@@ -34,6 +41,7 @@ export default async function appointmentCompleteRoute(app: FastifyInstance): Pr
         tenantId: auth.tenant.id,
         tipCents: parsed.data.tipCents,
         stripe: app.adapters.stripe,
+        mutation: request.mutation,
       });
 
       if (!outcome.ok) {

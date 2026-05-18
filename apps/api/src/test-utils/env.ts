@@ -14,6 +14,7 @@ export function makeTestEnv(overrides: TestEnvOverrides = {}): AppEnv {
     webOrigin: 'http://localhost:5173',
     cookieSecret: 'test-cookie-secret-32-bytes-padding',
     magicLinkSecret: 'test-magic-secret-32-bytes-padding!',
+    rescheduleTokenSecret: 'test-reschedule-secret-32-bytes-pad',
     redisUrl: 'redis://unused',
     stripe: {
       mode: overrides.stripeMode ?? 'twin',

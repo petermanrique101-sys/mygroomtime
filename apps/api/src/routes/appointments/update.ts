@@ -7,6 +7,7 @@ import {
 } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { findActiveAppointment } from './find.js';
 import { serializeAppointment } from './serialize.js';
 import { geocodeOverride } from './geocode-override.js';
@@ -21,7 +22,13 @@ type Params = { id: string };
 export default async function updateAppointmentRoute(app: FastifyInstance): Promise<void> {
   app.patch(
     '/appointments/:id',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'appointment' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const { id } = request.params as Params;

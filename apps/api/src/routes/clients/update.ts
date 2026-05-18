@@ -7,6 +7,7 @@ import {
 } from '@mygroomtime/shared';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
+import { makeMutationDedupe } from '../../middleware/mutation-dedupe.js';
 import { findActiveClient, findActivePets } from './find.js';
 import { geocodeOnWrite } from './geocode-address.js';
 import { serializeClientWithPets } from './serialize.js';
@@ -28,7 +29,13 @@ function addressChanged(
 export default async function updateClientRoute(app: FastifyInstance): Promise<void> {
   app.patch(
     '/clients/:id',
-    { preHandler: [requireAuth, requirePaidPlan] },
+    {
+      preHandler: [
+        requireAuth,
+        requirePaidPlan,
+        makeMutationDedupe({ resourceType: 'client' }),
+      ],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const auth = request.auth!;
       const { id } = request.params as Params;

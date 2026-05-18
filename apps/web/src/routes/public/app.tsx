@@ -6,6 +6,7 @@ import PublicBookRoute from './book';
 import PublicBookingDetailsRoute from './details';
 import PublicBookedRoute from './booked';
 import PublicManageNotImplementedRoute from './manage-not-implemented';
+import PublicRescheduleRoute from './reschedule';
 
 function useAllowIndexing(): void {
   useEffect(() => {
@@ -32,6 +33,7 @@ export default function PublicApp({ slug }: { slug: string }): JSX.Element {
             path="/public/:slug/manage/:appointmentId"
             element={<PublicManageNotImplementedRoute />}
           />
+          <Route path="/public/reschedule/:token" element={<PublicRescheduleRoute />} />
           <Route path="*" element={<Navigate to={`/public/${slug}`} replace />} />
         </Routes>
       </BrowserRouter>

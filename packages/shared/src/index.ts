@@ -18,3 +18,5 @@ export * from './settings-payments.js';
 export * from './settings-billing.js';
 export * from './settings-sms.js';
 export * from './route-optimization.js';
+export * from './public-reschedule.js';
+export * from './dashboard.js';

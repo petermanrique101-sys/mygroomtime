@@ -86,23 +86,54 @@ Every outbound body is auto-appended with " Reply STOP to opt out." and truncate
 
 ### Scheduled SMS reminders in dev
 
-Pro+ tenants can flip `/settings/sms` to send a 48-hour confirmation, a 2-hour heads-up, and a day-after thank-you. Reminders are scheduled in BullMQ on Redis at appointment-create time and rescheduled on PATCH / removed on DELETE. They fire at the scheduled wall-clock time of the customer the appointment belongs to — no quiet-hours awareness in v1.
+Pro+ tenants can flip `/settings/sms` to send a 1-week heads-up, a 48-hour confirmation, a 2-hour ETA, and a day-after thank-you. Reminders are scheduled in BullMQ on Redis at appointment-create time (and again at materialization time for recurring instances), rescheduled on PATCH / removed on DELETE. They fire at the scheduled wall-clock time of the customer the appointment belongs to — no quiet-hours awareness in v1.
 
 Seeding an appointment with reminders is just:
 
 1. Promote a tenant to Pro: `UPDATE "Tenant" SET plan='pro', "smsRemindersEnabled"=true WHERE id='…'`.
 2. Sign in as the owner → `/settings/sms` shows the toggle on.
-3. Create an appointment via the calendar (or `POST /appointments`). Three BullMQ jobs land with deterministic ids: `reminder-48h.<appointmentId>`, `reminder-2h.<appointmentId>`, `reminder-post.<appointmentId>`.
+3. Create an appointment via the calendar (or `POST /appointments`). Up to four BullMQ jobs land with deterministic ids: `reminder-7d.<appointmentId>`, `reminder-48h.<appointmentId>`, `reminder-2h.<appointmentId>`, `reminder-post.<appointmentId>`. The 7-day job is only enqueued if the appointment is >7 days out.
 
 To exercise the worker without waiting hours, promote a delayed job so it runs immediately:
 
 ```bash
-pnpm --filter @mygroomtime/api dev:fire-reminder <appointmentId> reminder-48h
+pnpm --filter @mygroomtime/api dev:fire-reminder <appointmentId> reminder-7d
 ```
 
 The worker fires `app.adapters.twilio.sendSms`, which writes the usual audit row. Watch via `curl http://localhost:4243/__twin_messages`.
 
-Toggle-off is intentionally non-destructive: existing scheduled jobs stay in the queue and are skipped at fire time by the adapter's tier / opt-out checks. Toggling back on does not backfill reminders for existing future appointments — only newly created or rescheduled appointments enqueue jobs.
+The 7-day reminder body invites a reply (`Reply C to confirm, R to reschedule`). Inbound replies are routed via the chunk-17 dispatcher (see "Recurring appointments" below).
+
+Toggle-off is intentionally non-destructive: existing scheduled jobs stay in the queue and are skipped at fire time by the adapter's tier / opt-out checks. Toggling back on does not backfill reminders for existing future appointments — only newly created, rescheduled, or materialized appointments enqueue jobs.
+
+### Recurring appointments (chunk 17)
+
+When the owner taps "Complete" and rebooks in N weeks, a `RecurringSeries` row is created (or the matching existing one is reused). A nightly BullMQ job (`recurring-materialize` queue, fires at 02:00 UTC) walks every active series whose `nextDueDate ≤ now + 14d` and creates the next concrete `Appointment` — copying snapshot fields from the latest completed parent in the series (so future instances don't drift if the live `Service` is repriced or recolored).
+
+Auto-pause cases (operator-visible in `RecurringSeries.pauseReason`):
+
+- **`source_deleted`** — client or pet was soft-deleted between rebook and the next materialization. No retry; owner must explicitly resume.
+- **`no_available_slot`** — `canPlaceAppointment` rejected the slot 7 nights in a row (owner has manually filled the calendar). The series pauses; nightly walk stops processing it.
+
+To exercise the walker locally without waiting until 02:00 UTC:
+
+```bash
+pnpm --filter @mygroomtime/api dev:fire-materialization
+```
+
+That runs the walk in-process (bypassing BullMQ) and prints each series outcome. The 7-day reminder is enqueued for each successfully materialized appointment if `smsRemindersEnabled=true`.
+
+**Pause / resume**: when an appointment is part of a recurring series, the calendar detail drawer shows a "Recurring" badge plus a "Pause series" or "Resume series" button (whichever state applies). Pausing only stops future materializations — it doesn't touch already-materialized future instances (those can be canceled individually).
+
+**Inbound SMS dispatcher**: the chunk-17 webhook handler at `POST /webhooks/twilio` routes inbound replies priority-first:
+
+1. `STOP` / `UNSUBSCRIBE` / `CANCEL` / `END` / `QUIT` → opt the customer out (chunk-14 behavior, unchanged).
+2. Exact-trimmed `R`/`r` OR substring `RESCHEDULE` → mint a signed reschedule JWT and reply with the customer-facing URL `https://<slug>.<host>/public/reschedule/<token>`.
+3. Exact `C` / `Y` / `YES` → log the confirmation and reply "Thanks! See you …".
+4. `START` / `UNSTOP` → silent opt-in (no auto-reply).
+5. Anything else → fallback "Sorry — we didn't catch that. Reply C to confirm, R to reschedule …".
+
+The reschedule token is single-use (Redis-backed `jti`), expires at `appointment.scheduledStart + 6h`, and references the source appointment. The public reschedule page (`/public/reschedule/:token`) reuses the chunk-11 availability picker, lets the customer pick a new slot, and on commit cancels the old appointment + creates a new one inheriting the same `depositChargeId` (no new payment is taken) + same client/pet/snapshot. Reminders are removed from the old and enqueued for the new.
 
 ### Route optimization in dev
 
@@ -153,6 +184,48 @@ The owner-side flow lives at `/settings/billing`:
 "Update card / Manage subscription" hits `POST /settings/billing/portal-session` → twin's `/v1/billing_portal/sessions`. The twin returns a hosted page with a "Back to app" link (or append `?auto=1` to redirect immediately). In live, Stripe's real Customer Portal opens.
 
 Plan-change calls use a 5-minute-bucketed idempotency key (`tenant-<id>-<tier>-<bucket>`), so a double-click within the same window is one Stripe call and one webhook delivery.
+
+## Offline support in dev
+
+Chunk 18 adds offline-tolerant scheduling. The web is a PWA: today's read surface
+(appointments, buffers, services, /me) is cached with a 5-minute fresh window via a
+service worker, and owner-side write endpoints flow through an IndexedDB-backed
+mutation queue that replays on reconnect.
+
+### Simulating offline
+
+1. Open Chrome DevTools → **Application** → **Service Workers**. Check **Offline**
+   (or use the Network panel's throttling dropdown → "Offline").
+2. Drive the day view: mark appointments started, completed, etc. You'll see a
+   neutral gray banner at the top: "Offline — N changes queued".
+3. Tap **Pending** in the banner to inspect the queued mutations. Conflicts (4xx
+   on replay) land in a "Needs attention" section with Discard.
+4. Uncheck Offline. The queue drains in client-creation order (UUIDv7-sorted) and
+   the banner fades through "Syncing — N left" → "All caught up".
+
+### How the queue behaves
+
+- Each write generates a client-side UUIDv7 sent as the `X-Mutation-Id` header.
+- Online + 200/201 → normal flow.
+- Online + 5xx / offline → enqueue locally, exponential backoff 1s/2s/4s/8s/16s
+  for up to 5 attempts on replay, then conflict.
+- 4xx on replay → straight to the conflict panel (no retry).
+- Replays of an already-processed id return the original payload from the server
+  without re-running the handler — Stripe charges, side-effects, etc. fire once.
+- The queue survives app close/reopen via IndexedDB.
+
+### Inspecting MutationLog
+
+The api persists every owner-side mutation outcome to `MutationLog` (90-day
+retention sweep lands in chunk 22). Open Prisma Studio to look at recent rows:
+
+```bash
+pnpm db:studio
+```
+
+…then browse the `MutationLog` table. Columns: id (the UUIDv7 the client sent),
+status (`processed` | `failed`), statusCode, endpoint, resourceType, resourceId,
+resultPayloadJson.
 
 ## Landing page
 

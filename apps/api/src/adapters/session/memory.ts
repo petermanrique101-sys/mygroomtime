@@ -8,6 +8,7 @@ type Entry = { value: SessionPayload; expiresAt: number };
 export function createMemorySessionStore(): SessionStore {
   const sessions = new Map<string, Entry>();
   const magicJtis = new Map<string, number>();
+  const rescheduleJtis = new Map<string, number>();
 
   function gcSessions(): void {
     const now = Date.now();
@@ -16,6 +17,10 @@ export function createMemorySessionStore(): SessionStore {
   function gcJtis(): void {
     const now = Date.now();
     for (const [k, v] of magicJtis) if (v <= now) magicJtis.delete(k);
+  }
+  function gcRescheduleJtis(): void {
+    const now = Date.now();
+    for (const [k, v] of rescheduleJtis) if (v <= now) rescheduleJtis.delete(k);
   }
 
   return {
@@ -50,9 +55,17 @@ export function createMemorySessionStore(): SessionStore {
       gcJtis();
       return magicJtis.delete(jti);
     },
+    async recordRescheduleJti(jti, ttlSec) {
+      rescheduleJtis.set(jti, Date.now() + ttlSec * 1000);
+    },
+    async consumeRescheduleJti(jti) {
+      gcRescheduleJtis();
+      return rescheduleJtis.delete(jti);
+    },
     async close() {
       sessions.clear();
       magicJtis.clear();
+      rescheduleJtis.clear();
     },
   };
 }

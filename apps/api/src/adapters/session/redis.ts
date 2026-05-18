@@ -5,6 +5,7 @@ import type { SessionPayload, SessionStore } from './index.js';
 const SESSION_TTL_SEC = 60 * 60 * 24 * 14;
 const SESSION_PREFIX = 'session:';
 const MAGIC_JTI_PREFIX = 'magic-jti:';
+const RESCHEDULE_JTI_PREFIX = 'reschedule-jti:';
 
 function newSid(): string {
   return randomBytes(32).toString('base64url');
@@ -54,9 +55,28 @@ export function createRedisSessionStore(redisUrl: string): SessionStore {
     return removed > 0;
   }
 
+  async function recordRescheduleJti(jti: string, ttlSec: number): Promise<void> {
+    await client.set(RESCHEDULE_JTI_PREFIX + jti, '1', 'EX', Math.max(1, Math.floor(ttlSec)));
+  }
+
+  async function consumeRescheduleJti(jti: string): Promise<boolean> {
+    const removed = await client.del(RESCHEDULE_JTI_PREFIX + jti);
+    return removed > 0;
+  }
+
   async function close(): Promise<void> {
     await client.quit();
   }
 
-  return { create, read, touch, destroy, recordMagicJti, consumeMagicJti, close };
+  return {
+    create,
+    read,
+    touch,
+    destroy,
+    recordMagicJti,
+    consumeMagicJti,
+    recordRescheduleJti,
+    consumeRescheduleJti,
+    close,
+  };
 }

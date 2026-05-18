@@ -17,6 +17,19 @@ import {
   type ReminderWorker,
 } from './queue/connection.js';
 import { createReminderHandler } from './queue/reminder-worker.js';
+import {
+  closeMaterializeInfra,
+  createMaterializeQueue,
+  createMaterializeWorker,
+  type MaterializeQueue,
+  type MaterializeWorker,
+} from './queue/materialize-connection.js';
+import { createMaterializeHandler } from './queue/materialize-worker.js';
+import { MATERIALIZE_JOB_NAME } from './queue/queue-names.js';
+import {
+  captureMutationPayload,
+  persistMutationLog,
+} from './middleware/mutation-dedupe.js';
 import authRoutes from './routes/auth/index.js';
 import probeRoutes from './routes/probe.js';
 import clientRoutes from './routes/clients/index.js';
@@ -27,10 +40,18 @@ import publicRoutes from './routes/public/index.js';
 import settingsRoutes from './routes/settings/index.js';
 import stripeWebhookRoute from './routes/webhooks/stripe/index.js';
 import twilioWebhookRoute from './routes/webhooks/twilio/index.js';
+import recurringSeriesRoutes from './routes/recurring-series/index.js';
+import dashboardRoutes from './routes/dashboard/index.js';
 
 export type ReminderInfra = {
   queue: ReminderQueue;
   worker: ReminderWorker | null;
+  connection: Redis | null;
+};
+
+export type MaterializeInfra = {
+  queue: MaterializeQueue;
+  worker: MaterializeWorker | null;
   connection: Redis | null;
 };
 
@@ -41,6 +62,7 @@ export type CreateAppOptions = {
   emailAdapter?: EmailAdapter;
   adapters?: Partial<Adapters>;
   reminderInfra?: ReminderInfra | null;
+  materializeInfra?: MaterializeInfra | null;
 };
 
 const PII_REDACT_PATHS = [
@@ -125,6 +147,47 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
     app.decorate('reminderWorker', null);
   }
 
+  // why: materialize infra mirrors reminder infra. Tests skip it by default unless they
+  // need to exercise the nightly walk. In production startup we build a live queue+worker
+  // and register a BullMQ repeat (nightly at 02:00 UTC) so the walk fires without a
+  // separate cron container.
+  let materializeInfra: MaterializeInfra | null;
+  if (opts.materializeInfra === null) {
+    materializeInfra = null;
+  } else if (opts.materializeInfra) {
+    materializeInfra = opts.materializeInfra;
+  } else if (env.nodeEnv === 'test') {
+    materializeInfra = null;
+  } else {
+    const matConnection = createReminderRedis(env.redisUrl);
+    const matQueue = createMaterializeQueue(matConnection);
+    const matWorker = createMaterializeWorker(
+      createReminderRedis(env.redisUrl),
+      createMaterializeHandler({
+        gmaps: adapters.gmaps,
+        reminderQueue: reminderInfra?.queue ?? null,
+        log: app.log,
+      }),
+    );
+    materializeInfra = { queue: matQueue, worker: matWorker, connection: matConnection };
+
+    // why: nightly repeat at 02:00 UTC. BullMQ dedupes the repeatable job by its name +
+    // cron pattern, so app restarts don't pile up duplicate schedulers.
+    await matQueue.add(
+      MATERIALIZE_JOB_NAME,
+      { tick: Date.now() },
+      { repeat: { pattern: '0 2 * * *' }, removeOnComplete: 100, removeOnFail: 100 },
+    );
+  }
+
+  if (materializeInfra) {
+    app.decorate('materializeQueue', materializeInfra.queue);
+    app.decorate('materializeWorker', materializeInfra.worker);
+  } else {
+    app.decorate('materializeQueue', null);
+    app.decorate('materializeWorker', null);
+  }
+
   app.addHook('onClose', async () => {
     await adapters.session.close();
     if (reminderInfra) {
@@ -132,6 +195,13 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
         reminderInfra.worker,
         reminderInfra.queue,
         reminderInfra.connection,
+      );
+    }
+    if (materializeInfra) {
+      await closeMaterializeInfra(
+        materializeInfra.worker,
+        materializeInfra.queue,
+        materializeInfra.connection,
       );
     }
   });
@@ -189,6 +259,17 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
     timeWindow: '1 minute',
   });
 
+  // why: chunk 18 — capture the response body in onSend (sync, no await) and persist the
+  // MutationLog row in onResponse (after the wire is closed). Both hooks are no-ops when
+  // request.mutation is absent.
+  app.addHook('onSend', (request, reply, payload, done) => {
+    captureMutationPayload(request, reply, payload);
+    done(null, payload);
+  });
+  app.addHook('onResponse', async (request, reply) => {
+    await persistMutationLog(request, reply);
+  });
+
   app.get('/healthz', async (): Promise<HealthCheck> => ({ status: 'ok' }));
 
   await app.register(authRoutes);
@@ -201,6 +282,8 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
   await app.register(publicRoutes);
   await app.register(stripeWebhookRoute);
   await app.register(twilioWebhookRoute);
+  await app.register(recurringSeriesRoutes);
+  await app.register(dashboardRoutes);
 
   return app;
 }

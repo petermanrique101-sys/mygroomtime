@@ -22,17 +22,24 @@ export function createReminderRedis(redisUrl: string, overrides: RedisOptions = 
   });
 }
 
-export function createReminderQueue(connection: Redis): ReminderQueue {
-  return new Queue<ReminderJobData, void, ReminderJobName>(REMINDER_QUEUE, { connection });
+// why: queue name is parameterized so tests can isolate to a unique name and not contend
+// with a long-running dev worker (`pnpm dev`) holding `BZPOPMIN` on the production queue.
+// Production callers omit the second arg and get REMINDER_QUEUE.
+export function createReminderQueue(
+  connection: Redis,
+  queueName: string = REMINDER_QUEUE,
+): ReminderQueue {
+  return new Queue<ReminderJobData, void, ReminderJobName>(queueName, { connection });
 }
 
 export function createReminderWorker(
   connection: Redis,
   handler: ReminderHandler,
+  queueName: string = REMINDER_QUEUE,
 ): ReminderWorker {
   // why: BullMQ defaults retry to immediate failure. The spec wants exponential backoff up
   // to 5 attempts; after that the job lands in BullMQ's `failed` state (dead-letter).
-  return new Worker<ReminderJobData, void, ReminderJobName>(REMINDER_QUEUE, handler, {
+  return new Worker<ReminderJobData, void, ReminderJobName>(queueName, handler, {
     connection,
     autorun: true,
     settings: { backoffStrategy: undefined },

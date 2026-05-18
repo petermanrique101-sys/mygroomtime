@@ -9,21 +9,33 @@ export type TwilioAdapterEnv = {
 };
 
 export type SendSmsInput = {
-  to: string;
+  toE164: string;
   body: string;
-  statusCallback?: string;
+  idempotencyKey: string;
+  tenantId: string;
+  clientId: string;
+  appointmentId?: string;
 };
-export type SendSmsOutput = { sid: string };
+
+export type SendSmsFailureReason =
+  | 'tier_gated'
+  | 'opted_out'
+  | 'duplicate'
+  | 'truncated_blocked'
+  | 'error';
+
+export type SendSmsResult =
+  | { sent: true; twilioSid: string; smsMessageId: string }
+  | { sent: false; reason: SendSmsFailureReason; smsMessageId: string };
 
 export type VerifyTwilioWebhookInput = {
   url: string;
   params: Record<string, string>;
   signature: string;
-  authToken: string;
 };
 
 export interface TwilioAdapter {
   readonly mode: TwilioMode;
-  sendSms(input: SendSmsInput): Promise<SendSmsOutput>;
-  verifyWebhookSignature(input: VerifyTwilioWebhookInput): Promise<boolean>;
+  sendSms(input: SendSmsInput): Promise<SendSmsResult>;
+  verifyWebhookSignature(input: VerifyTwilioWebhookInput): boolean;
 }

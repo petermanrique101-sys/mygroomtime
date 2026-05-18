@@ -27,7 +27,8 @@
     "docker:down": "docker compose down",
     "twin:gmaps": "pnpm --filter @mygroomtime/twin-google-maps dev",
     "twin:geocode": "pnpm --filter @mygroomtime/twin-geocode dev",
-    "twin:stripe": "pnpm --filter @mygroomtime/twin-stripe dev"
+    "twin:stripe": "pnpm --filter @mygroomtime/twin-stripe dev",
+    "twin:twilio": "pnpm --filter @mygroomtime/twin-twilio dev"
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",

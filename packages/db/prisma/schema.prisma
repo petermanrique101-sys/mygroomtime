@@ -46,11 +46,11 @@ enum SmsDirection {
 }
 
 enum SmsStatus {
-  queued
+  pending
   sent
-  delivered
-  failed
-  undelivered
+  error
+  skipped_tier
+  skipped_opt_out
 }
 
 enum WebhookSource {
@@ -198,6 +198,7 @@ model Client {
   preferredGroomerId String?
   notes              String    @default("")
   smsOptOut          Boolean   @default(false)
+  smsOptOutAt        DateTime?
   deletedAt          DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -350,25 +351,28 @@ model BookingPageRequest {
 }
 
 model SmsMessage {
-  id            String       @id @default(cuid())
-  tenantId      String
-  clientId      String?
-  appointmentId String?
-  direction     SmsDirection
-  toPhone       String
-  fromPhone     String
-  body          String
-  status        SmsStatus    @default(queued)
-  twilioSid     String?      @unique
-  errorMessage  String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id              String       @id @default(cuid())
+  tenantId        String
+  clientId        String?
+  appointmentId   String?
+  direction       SmsDirection
+  toE164          String
+  fromE164        String
+  body            String
+  status          SmsStatus    @default(pending)
+  twilioSid       String?      @unique
+  idempotencyKey  String?
+  errorMessage    String?
+  sentAt          DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  client      Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
+  @@index([tenantId, clientId])
   @@index([tenantId, createdAt])
 }
 

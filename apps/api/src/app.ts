@@ -16,6 +16,7 @@ import billingRoutes from './routes/billing/index.js';
 import publicRoutes from './routes/public/index.js';
 import settingsRoutes from './routes/settings/index.js';
 import stripeWebhookRoute from './routes/webhooks/stripe/index.js';
+import twilioWebhookRoute from './routes/webhooks/twilio/index.js';
 
 export type CreateAppOptions = {
   logger?: boolean;
@@ -39,9 +40,16 @@ const PII_REDACT_PATHS = [
   'req.body.pet',
   'req.body.firstName',
   'req.body.lastName',
+  'req.body.From',
+  'req.body.To',
+  'req.body.Body',
+  'req.body.toE164',
+  'req.body.fromE164',
+  'req.body.body',
   'req.headers.cookie',
   'req.headers.authorization',
   'req.headers["stripe-signature"]',
+  'req.headers["x-twilio-signature"]',
   'res.headers["set-cookie"]',
 ];
 
@@ -77,6 +85,25 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
   // why: webhook handlers verify Stripe signatures over the raw bytes. The default JSON
   // parser discards the buffer, so we replace it with one that stashes it on req.rawBody.
   // All other JSON routes keep their normal parsed body.
+  // why: Twilio's inbound webhook is application/x-www-form-urlencoded. Fastify has no
+  // default parser for this content type. We parse to a flat string→string map (Twilio
+  // never sends nested keys) so the route handler can compute the signature base over
+  // the same shape Twilio used to sign it.
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      const raw = typeof body === 'string' ? body : String(body);
+      const out: Record<string, string> = {};
+      try {
+        for (const [k, v] of new URLSearchParams(raw)) out[k] = v;
+        done(null, out);
+      } catch (err) {
+        done(err as Error);
+      }
+    },
+  );
+
   app.addContentTypeParser(
     'application/json',
     { parseAs: 'buffer' },
@@ -119,6 +146,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
   await app.register(settingsRoutes);
   await app.register(publicRoutes);
   await app.register(stripeWebhookRoute);
+  await app.register(twilioWebhookRoute);
 
   return app;
 }

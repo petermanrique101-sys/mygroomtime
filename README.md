@@ -54,11 +54,35 @@ The twins aren't auto-started by `pnpm dev` — they'd be noise until you actual
 pnpm twin:gmaps       # Google Maps Distance Matrix on :4245
 pnpm twin:geocode     # Google Geocoding on :4246
 pnpm twin:stripe      # Stripe REST + webhooks on :4242
+pnpm twin:twilio      # Twilio Messages API + inbound on :4243
 ```
 
-Run each twin only when the feature you're touching uses that adapter in twin mode (the default). Address-creating flows (new client, public booking submit) need the geocode twin; routing/availability flows need the gmaps twin. Subscription billing (signup → Checkout) needs the Stripe twin.
+Run each twin only when the feature you're touching uses that adapter in twin mode (the default). Address-creating flows (new client, public booking submit) need the geocode twin; routing/availability flows need the gmaps twin. Subscription billing (signup → Checkout) needs the Stripe twin. Anything that sends SMS (booking confirmation, future reminders) needs the Twilio twin.
 
 The Stripe twin renders a hosted-checkout page that you can click through, or you can append `?auto=1` to the Checkout URL to complete + fire the webhook in one hop — handy for automated flows.
+
+### SMS in dev
+
+The Twilio twin (port 4243) accepts outbound sends at `/2010-04-01/Accounts/:sid/Messages.json` exactly like the real API and logs them in memory. Useful endpoints while iterating:
+
+```bash
+# Inspect what was "sent" in this session
+curl http://localhost:4243/__twin_messages
+
+# Simulate a customer texting STOP — fires a properly-signed POST to the api so the
+# Twilio webhook handler runs end-to-end. The api will set Client.smsOptOut=true on
+# any client whose phone matches (10-digit suffix) the From number.
+curl -X POST http://localhost:4243/__twin_inbound \
+  -H 'content-type: application/json' \
+  -d '{"from":"+19725550199","body":"STOP"}'
+
+# Clear twin state (sent + idempotency log).
+curl -X POST http://localhost:4243/__twin_reset
+```
+
+Outbound SMS is **Pro+ only** — sends from a Starter / unpaid / past_due / canceled tenant short-circuit at the adapter to `{ sent: false, reason: 'tier_gated' }` and write an `SmsMessage` row with `status='skipped_tier'`. Same swallow-and-log for opted-out clients (`status='skipped_opt_out'`). No SMS reaches Twilio in those cases.
+
+Every outbound body is auto-appended with " Reply STOP to opt out." and truncated to 160 chars if needed. The booking-confirmation handler passes the bare body; the adapter appends the suffix.
 
 ## Public booking pages in dev
 

@@ -149,16 +149,26 @@ export default function ClientDetailRoute(): JSX.Element {
               required
               error={errors.name}
             />
-            <TextField
-              label="Phone"
-              name="phone"
-              type="tel"
-              inputMode="tel"
-              value={form.phone}
-              onChange={(v) => setForm((f) => (f ? { ...f, phone: v } : f))}
-              required
-              error={errors.phone}
-            />
+            <div>
+              <TextField
+                label="Phone"
+                name="phone"
+                type="tel"
+                inputMode="tel"
+                value={form.phone}
+                onChange={(v) => setForm((f) => (f ? { ...f, phone: v } : f))}
+                required
+                error={errors.phone}
+              />
+              {client.smsOptOut ? (
+                <p
+                  className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800"
+                  title="This customer replied STOP to a text. They won't receive any SMS until they text START."
+                >
+                  Opted out of SMS
+                </p>
+              ) : null}
+            </div>
             <TextField
               label="Email"
               name="email"

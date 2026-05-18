@@ -7,18 +7,11 @@ import {
 } from '@mygroomtime/db';
 import type { BookingPageRequest } from '@mygroomtime/db';
 import type { PaymentIntentSucceededEvent } from '../../../../adapters/stripe/types.js';
+import { normalizePhone, tenDigitSuffix, toDialFormat } from '../../../../services/phone.js';
 
 export type HandlerResult = { ok: true } | { ok: false; reason: string };
 
 const PROMOTED_OK: HandlerResult = { ok: true };
-
-function normalizePhone(raw: string): string {
-  // why: phone-based match-or-create needs a stable key. Strip everything except digits;
-  // the public booking schema validates roughly-E.164-shaped input, so the stored Client
-  // phone is what came off the form. We compare by digits-only suffix to defuse small
-  // formatting drift (e.g., "+1 972 555 0199" vs "(972) 555-0199").
-  return raw.replace(/\D+/g, '');
-}
 
 async function matchOrCreateClient(
   scoped: TenantScopedDb,
@@ -26,11 +19,12 @@ async function matchOrCreateClient(
 ): Promise<string> {
   const phoneDigits = normalizePhone(row.ownerPhone);
   if (phoneDigits.length > 0) {
+    const suffix = tenDigitSuffix(row.ownerPhone);
     const candidates = await scoped.client.findMany({
       where: { deletedAt: null },
       select: { id: true, phone: true },
     });
-    const match = candidates.find((c) => normalizePhone(c.phone).endsWith(phoneDigits.slice(-10)));
+    const match = candidates.find((c) => tenDigitSuffix(c.phone) === suffix);
     if (match) return match.id;
   }
   const created = await scoped.client.create({
@@ -183,23 +177,49 @@ export function makePaymentIntentSucceededHandler(app: FastifyInstance) {
       },
     });
 
+    const tenantRow = await db.global.tenant.findUnique({
+      where: { id: tenantId },
+      select: { businessName: true },
+    });
+    const businessName = tenantRow?.businessName ?? 'MyGroomTime';
+    const startFormatted = formatStart(row.requestedStart);
+
     if (row.ownerEmail) {
-      const tenantRow = await db.global.tenant.findUnique({
-        where: { id: tenantId },
-        select: { businessName: true },
-      });
       await app.adapters.email.sendBookingConfirmation({
         to: row.ownerEmail,
         customerName: row.ownerName,
-        businessName: tenantRow?.businessName ?? 'MyGroomTime',
+        businessName,
         serviceName: service.name,
-        start: formatStart(row.requestedStart),
+        start: startFormatted,
         addressLine: `${row.addressStreet}, ${row.addressCity}, ${row.addressState} ${row.addressZip}`,
         depositAmount: dollars(row.depositCents),
       });
     }
 
-    // chunk 14: enqueue SMS confirmation
+    const toE164 = toDialFormat(row.ownerPhone);
+    if (toE164.length > 0) {
+      const firstName = row.ownerName.trim().split(/\s+/)[0] ?? row.ownerName;
+      const smsBody = `Hi ${firstName}, this is ${businessName} confirming ${row.petName}'s ${service.name} on ${startFormatted}.`;
+      const smsResult = await app.adapters.twilio.sendSms({
+        toE164,
+        body: smsBody,
+        idempotencyKey: `booking-confirmation:${appointment.id}`,
+        tenantId,
+        clientId,
+        appointmentId: appointment.id,
+      });
+      if (smsResult.sent) {
+        app.log.info(
+          { appointmentId: appointment.id, twilioSid: smsResult.twilioSid },
+          'booking confirmation SMS sent',
+        );
+      } else {
+        app.log.info(
+          { appointmentId: appointment.id, reason: smsResult.reason },
+          'booking confirmation SMS skipped or failed (see SmsMessage row)',
+        );
+      }
+    }
 
     return PROMOTED_OK;
   };

@@ -159,6 +159,15 @@ export function NewAppointmentSheet({
             </select>
           </Field>
 
+          {selectedClient?.smsOptOut ? (
+            <div
+              role="status"
+              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            >
+              This customer has opted out of SMS. They won&apos;t receive a booking confirmation or future reminders.
+            </div>
+          ) : null}
+
           <Field label="Pet">
             <select
               value={petId}

@@ -36,6 +36,7 @@ export type {
   Service,
   SmsMessage,
   Tenant,
+  TenantPlanChange,
   User,
   Vehicle,
   WebhookEvent,

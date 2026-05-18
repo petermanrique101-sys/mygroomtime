@@ -28,6 +28,7 @@ if (process.env.NODE_ENV !== 'production') {
 export interface GlobalDb {
   tenant: PrismaClient['tenant'];
   webhookEvent: PrismaClient['webhookEvent'];
+  tenantPlanChange: PrismaClient['tenantPlanChange'];
   $transaction: PrismaClient['$transaction'];
   $disconnect: PrismaClient['$disconnect'];
 }
@@ -35,6 +36,7 @@ export interface GlobalDb {
 const globalDb: GlobalDb = {
   tenant: prisma.tenant,
   webhookEvent: prisma.webhookEvent,
+  tenantPlanChange: prisma.tenantPlanChange,
   $transaction: prisma.$transaction.bind(prisma),
   $disconnect: prisma.$disconnect.bind(prisma),
 };

@@ -1,7 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import type { ParsedStripeEvent } from '../../../adapters/stripe/types.js';
 import { handleCheckoutCompleted } from './handlers/checkout-completed.js';
-import { handleSubscriptionUpdated } from './handlers/subscription-updated.js';
+import {
+  makeSubscriptionUpdatedHandler,
+  makeSubscriptionCreatedHandler,
+} from './handlers/subscription-updated.js';
 import { handleSubscriptionDeleted } from './handlers/subscription-deleted.js';
 import { handleInvoicePaymentFailed } from './handlers/invoice-payment-failed.js';
 import { handleAccountUpdated } from './handlers/account-updated.js';
@@ -22,8 +25,14 @@ export async function dispatchEvent(
       const res = await handleCheckoutCompleted(event);
       return res.ok ? { kind: 'ok' } : { kind: 'handler_error', reason: res.reason };
     }
+    if (event.type === 'customer.subscription.created') {
+      const handler = makeSubscriptionCreatedHandler(app);
+      const res = await handler(event);
+      return res.ok ? { kind: 'ok' } : { kind: 'handler_error', reason: res.reason };
+    }
     if (event.type === 'customer.subscription.updated') {
-      const res = await handleSubscriptionUpdated(event);
+      const handler = makeSubscriptionUpdatedHandler(app);
+      const res = await handler(event);
       return res.ok ? { kind: 'ok' } : { kind: 'handler_error', reason: res.reason };
     }
     if (event.type === 'customer.subscription.deleted') {

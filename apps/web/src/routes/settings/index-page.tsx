@@ -11,6 +11,11 @@ const SECTIONS: { to: string; title: string; description: string }[] = [
     title: 'Payments',
     description: 'Connect Stripe to take customer deposits.',
   },
+  {
+    to: '/settings/billing',
+    title: 'Billing',
+    description: 'Your plan, proration preview, and Stripe customer portal.',
+  },
 ];
 
 export default function SettingsIndexRoute(): JSX.Element {

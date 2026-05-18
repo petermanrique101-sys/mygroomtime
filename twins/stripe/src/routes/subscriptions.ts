@@ -75,6 +75,17 @@ export function registerSubscriptions(
         .code(404)
         .send({ error: { type: 'invalid_request_error', message: 'No such subscription' } });
     }
+    // why: real Stripe replays a cached response when the same idempotency key shows up
+    // and never re-fires the resulting webhook. Mirror that so the route's double-click
+    // protection is testable here too.
+    const idemKey =
+      asString(req.headers['idempotency-key']) ?? asString(req.headers['Idempotency-Key']);
+    if (idemKey) {
+      const cachedId = state.idempotencyKeys.get(idemKey);
+      if (cachedId === sub.id) {
+        return reply.code(200).send(serializeSubscription(sub));
+      }
+    }
     const body = (req.body ?? {}) as Record<string, unknown>;
     const item = firstItem(body.items);
     const newPrice = asString(item?.price) ?? asString(body.price);
@@ -82,6 +93,7 @@ export function registerSubscriptions(
     const newStatus = asString(body.status);
     if (isStatus(newStatus)) sub.status = newStatus;
     state.subscriptions.set(sub.id, sub);
+    if (idemKey) state.idempotencyKeys.set(idemKey, sub.id);
     const event = recordEvent(state, 'customer.subscription.updated', serializeSubscription(sub));
     void deliverEvent(cfg, event);
     return reply.code(200).send(serializeSubscription(sub));

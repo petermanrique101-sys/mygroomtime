@@ -15,3 +15,4 @@ export * from './appointments.js';
 export * from './billing.js';
 export * from './public-booking.js';
 export * from './settings-payments.js';
+export * from './settings-billing.js';

@@ -24,6 +24,11 @@ import type {
   ConfirmTwinPaymentIntentOutput,
   VerifyWebhookSignatureInput,
   ParsedStripeEvent,
+  PreviewPlanChangeInput,
+  ChangePlanInput,
+  CreatePortalSessionInput,
+  CreatePortalSessionOutput,
+  PlanPreview,
 } from './types.js';
 import { parseStripeEvent } from './parse.js';
 
@@ -164,6 +169,68 @@ export function createStripeLiveAdapter(env: StripeAdapterEnv): StripeAdapter {
       // why: this seam exists for dev/test against the twin only. In live, the
       // customer browser confirms via Stripe.js — never the server.
       throw new Error('stripe.live.confirmTwinPaymentIntent: not available in live mode');
+    },
+
+    async previewPlanChange(input: PreviewPlanChangeInput): Promise<PlanPreview> {
+      const sub = await client.subscriptions.retrieve(input.subscriptionId);
+      const firstItem = sub.items.data[0];
+      if (!firstItem) {
+        throw new Error('stripe.live.previewPlanChange: subscription has no items');
+      }
+      const upcoming = await client.invoices.retrieveUpcoming({
+        customer: input.customerId,
+        subscription: input.subscriptionId,
+        subscription_items: [{ id: firstItem.id, price: input.newPriceId }],
+        subscription_proration_behavior: 'create_prorations',
+      });
+      let prorationDelta = 0;
+      let nextChargeCents = 0;
+      for (const line of upcoming.lines.data) {
+        if (line.proration) {
+          prorationDelta += line.amount;
+        } else if (line.amount > nextChargeCents) {
+          nextChargeCents = line.amount;
+        }
+      }
+      const amountDueCents = Math.max(0, upcoming.amount_due);
+      const chargeCents = prorationDelta > 0 ? prorationDelta : 0;
+      const creditCents = prorationDelta < 0 ? -prorationDelta : 0;
+      return {
+        amountDueCents,
+        creditCents,
+        chargeCents,
+        currentPeriodEndIso: new Date(sub.current_period_end * 1000).toISOString(),
+        nextChargeCents,
+      };
+    },
+
+    async changePlan(input: ChangePlanInput): Promise<void> {
+      const sub = await client.subscriptions.retrieve(input.subscriptionId);
+      const firstItem = sub.items.data[0];
+      if (!firstItem) {
+        throw new Error('stripe.live.changePlan: subscription has no items');
+      }
+      await client.subscriptions.update(
+        input.subscriptionId,
+        {
+          items: [{ id: firstItem.id, price: input.newPriceId }],
+          proration_behavior: 'create_prorations',
+        },
+        { idempotencyKey: input.idempotencyKey },
+      );
+    },
+
+    async createPortalSession(
+      input: CreatePortalSessionInput,
+    ): Promise<CreatePortalSessionOutput> {
+      const session = await client.billingPortal.sessions.create({
+        customer: input.customerId,
+        return_url: input.returnUrl,
+      });
+      if (!session.url) {
+        throw new Error('stripe.live.createPortalSession: Stripe returned no url');
+      }
+      return { url: session.url };
     },
 
     verifyWebhookSignature(input: VerifyWebhookSignatureInput): ParsedStripeEvent {

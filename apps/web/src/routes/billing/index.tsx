@@ -62,7 +62,7 @@ export default function BillingRoute(): JSX.Element {
             <p className="font-semibold">Your last payment failed.</p>
             <p className="mt-1">
               Update your card to keep your account active.{' '}
-              <Link to="/billing/portal" className="underline">
+              <Link to="/settings/billing" className="underline">
                 Manage billing
               </Link>
             </p>
@@ -97,14 +97,12 @@ export default function BillingRoute(): JSX.Element {
               </>
             ) : null}
           </dl>
-          <button
-            type="button"
-            disabled
-            className="mt-5 block min-h-[44px] w-full cursor-not-allowed rounded-lg border border-gray-300 px-4 text-sm text-gray-500"
-            title="Coming in the next chunk"
+          <Link
+            to="/settings/billing"
+            className="mt-5 block min-h-[44px] w-full rounded-lg border border-gray-300 px-4 py-3 text-center text-sm font-medium text-gray-800"
           >
-            Manage billing (coming soon)
-          </button>
+            Manage plan & billing
+          </Link>
         </section>
 
         {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}

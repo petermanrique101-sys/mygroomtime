@@ -14,6 +14,7 @@ import ClientDetailRoute from './routes/clients/detail';
 import SettingsIndexRoute from './routes/settings/index-page';
 import ServicesSettingsRoute from './routes/settings/services';
 import SettingsPaymentsRoute from './routes/settings/payments';
+import SettingsBillingRoute from './routes/settings/billing';
 import CalendarRoute from './routes/calendar';
 import SignupBillingRoute from './routes/signup/billing';
 import SignupBillingSuccessRoute from './routes/signup/billing-success';
@@ -144,6 +145,14 @@ export default function App(): JSX.Element {
               element={
                 <Authed>
                   <SettingsPaymentsRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/settings/billing"
+              element={
+                <Authed>
+                  <SettingsBillingRoute />
                 </Authed>
               }
             />

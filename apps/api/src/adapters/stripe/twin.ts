@@ -23,6 +23,11 @@ import type {
   ConfirmTwinPaymentIntentOutput,
   VerifyWebhookSignatureInput,
   ParsedStripeEvent,
+  PreviewPlanChangeInput,
+  ChangePlanInput,
+  CreatePortalSessionInput,
+  CreatePortalSessionOutput,
+  PlanPreview,
 } from './types.js';
 import { parseStripeEvent } from './parse.js';
 import { verifyTwinSignature } from './verify-twin.js';
@@ -92,7 +97,18 @@ async function deleteJson<T>(twinUrl: string, path: string): Promise<T> {
 
 type CustomerWire = { id: string };
 type CheckoutSessionWire = { id: string; url: string };
-type SubscriptionWire = { id: string; status: string };
+type SubscriptionWire = {
+  id: string;
+  status: string;
+  current_period_end: number;
+  items: { data: Array<{ id: string; price: { id: string } }> };
+};
+type UpcomingInvoiceWire = {
+  amount_due: number;
+  period_end: number;
+  lines: { data: Array<{ amount: number; proration: boolean }> };
+};
+type PortalSessionWire = { id: string; url: string };
 type AccountWire = {
   id: string;
   charges_enabled: boolean;
@@ -227,6 +243,69 @@ export function createStripeTwinAdapter(env: StripeAdapterEnv): StripeAdapter {
         { payment_method: 'tok_visa_ok' },
       );
       return { id: wire.id, status: wire.status };
+    },
+
+    async previewPlanChange(input: PreviewPlanChangeInput): Promise<PlanPreview> {
+      const sub = await getJson<SubscriptionWire>(
+        base,
+        `/v1/subscriptions/${input.subscriptionId}`,
+      );
+      const firstItem = sub.items.data[0];
+      if (!firstItem) {
+        throw new Error('stripe.twin.previewPlanChange: subscription has no items');
+      }
+      const upcoming = await postForm<UpcomingInvoiceWire>(base, '/v1/invoices/upcoming', {
+        customer: input.customerId,
+        subscription: input.subscriptionId,
+        subscription_items: [{ id: firstItem.id, price: input.newPriceId }],
+        subscription_proration_behavior: 'create_prorations',
+      });
+      let prorationDelta = 0;
+      let nextChargeCents = 0;
+      for (const line of upcoming.lines.data) {
+        if (line.proration) {
+          prorationDelta += line.amount;
+        } else if (line.amount > nextChargeCents) {
+          nextChargeCents = line.amount;
+        }
+      }
+      return {
+        amountDueCents: Math.max(0, upcoming.amount_due),
+        creditCents: prorationDelta < 0 ? -prorationDelta : 0,
+        chargeCents: prorationDelta > 0 ? prorationDelta : 0,
+        currentPeriodEndIso: new Date(sub.current_period_end * 1000).toISOString(),
+        nextChargeCents,
+      };
+    },
+
+    async changePlan(input: ChangePlanInput): Promise<void> {
+      const sub = await getJson<SubscriptionWire>(
+        base,
+        `/v1/subscriptions/${input.subscriptionId}`,
+      );
+      const firstItem = sub.items.data[0];
+      if (!firstItem) {
+        throw new Error('stripe.twin.changePlan: subscription has no items');
+      }
+      await postForm<SubscriptionWire>(
+        base,
+        `/v1/subscriptions/${input.subscriptionId}`,
+        {
+          items: [{ id: firstItem.id, price: input.newPriceId }],
+          proration_behavior: 'create_prorations',
+        },
+        { 'idempotency-key': input.idempotencyKey },
+      );
+    },
+
+    async createPortalSession(
+      input: CreatePortalSessionInput,
+    ): Promise<CreatePortalSessionOutput> {
+      const wire = await postForm<PortalSessionWire>(base, '/v1/billing_portal/sessions', {
+        customer: input.customerId,
+        return_url: input.returnUrl,
+      });
+      return { url: wire.url };
     },
 
     verifyWebhookSignature(input: VerifyWebhookSignatureInput): ParsedStripeEvent {

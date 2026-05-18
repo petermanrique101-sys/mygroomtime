@@ -288,3 +288,102 @@ describe('stripe adapter ↔ twin — Connect onboarding + payment intent', () =
     expect(refund.id).toMatch(/^re_TWIN_/);
   });
 });
+
+describe('stripe adapter ↔ twin — plan change preview + confirm + portal', () => {
+  function makeAdapter() {
+    return createStripeAdapter({
+      mode: 'twin',
+      secretKey: 'sk_test',
+      webhookSecret: WEBHOOK_SECRET,
+      twinUrl,
+    });
+  }
+
+  async function bootSubscription(priceId: string): Promise<{ customerId: string; subId: string }> {
+    const adapter = makeAdapter();
+    const customer = await adapter.createCustomer({ email: `${priceId}-${Date.now()}@biz.test` });
+    const session = await adapter.createCheckoutSession({
+      customerId: customer.id,
+      priceId,
+      successUrl: 'http://example.test/ok',
+      cancelUrl: 'http://example.test/cancel',
+      metadata: { tenantId: `tenant_${Date.now()}` },
+    });
+    delivered.length = 0;
+    const auto = await fetch(`${session.url}?auto=1`, { redirect: 'manual' });
+    expect(auto.status).toBe(302);
+    await waitFor(() => delivered.some((e) => e.parsed.type === 'customer.subscription.created'));
+    const created = delivered.find((e) => e.parsed.type === 'customer.subscription.created');
+    const data = JSON.parse(created!.body) as { data: { object: { id: string } } };
+    return { customerId: customer.id, subId: data.data.object.id };
+  }
+
+  it('previewPlanChange upgrade returns positive charge, zero credit', async () => {
+    const { customerId, subId } = await bootSubscription('price_starter_twin');
+    const preview = await makeAdapter().previewPlanChange({
+      customerId,
+      subscriptionId: subId,
+      newPriceId: 'price_business_twin',
+    });
+    expect(preview.amountDueCents).toBeGreaterThan(0);
+    expect(preview.chargeCents).toBeGreaterThan(0);
+    expect(preview.creditCents).toBe(0);
+    expect(preview.nextChargeCents).toBe(14900);
+    expect(new Date(preview.currentPeriodEndIso).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('previewPlanChange downgrade returns zero charge, positive credit, zero amount due', async () => {
+    const { customerId, subId } = await bootSubscription('price_business_twin');
+    const preview = await makeAdapter().previewPlanChange({
+      customerId,
+      subscriptionId: subId,
+      newPriceId: 'price_starter_twin',
+    });
+    expect(preview.amountDueCents).toBe(0);
+    expect(preview.creditCents).toBeGreaterThan(0);
+    expect(preview.chargeCents).toBe(0);
+    expect(preview.nextChargeCents).toBe(4900);
+  });
+
+  it('changePlan flips priceId and fires customer.subscription.updated', async () => {
+    const { subId } = await bootSubscription('price_starter_twin');
+    delivered.length = 0;
+    await makeAdapter().changePlan({
+      subscriptionId: subId,
+      newPriceId: 'price_pro_twin',
+      idempotencyKey: `change-${Date.now()}`,
+    });
+    await waitFor(() => delivered.some((e) => e.parsed.type === 'customer.subscription.updated'));
+    const evt = delivered.find((e) => e.parsed.type === 'customer.subscription.updated');
+    expect(evt).toBeTruthy();
+    const parsed = JSON.parse(evt!.body) as {
+      data: { object: { items: { data: Array<{ price: { id: string } }> } } };
+    };
+    expect(parsed.data.object.items.data[0]!.price.id).toBe('price_pro_twin');
+  });
+
+  it('changePlan called twice with the same key only fires one webhook', async () => {
+    const { subId } = await bootSubscription('price_starter_twin');
+    delivered.length = 0;
+    const key = `change-idemp-${Date.now()}`;
+    const adapter = makeAdapter();
+    await adapter.changePlan({ subscriptionId: subId, newPriceId: 'price_pro_twin', idempotencyKey: key });
+    await adapter.changePlan({ subscriptionId: subId, newPriceId: 'price_pro_twin', idempotencyKey: key });
+    await waitFor(() => delivered.some((e) => e.parsed.type === 'customer.subscription.updated'));
+    await new Promise((r) => setTimeout(r, 100));
+    const events = delivered.filter((e) => e.parsed.type === 'customer.subscription.updated');
+    expect(events.length).toBe(1);
+  });
+
+  it('createPortalSession returns a URL that resolves over HTTP', async () => {
+    const adapter = makeAdapter();
+    const customer = await adapter.createCustomer({ email: `portal-${Date.now()}@biz.test` });
+    const session = await adapter.createPortalSession({
+      customerId: customer.id,
+      returnUrl: 'http://example.test/settings/billing',
+    });
+    expect(session.url).toContain('/__twin_billing_portal/');
+    const res = await fetch(session.url, { redirect: 'manual' });
+    expect(res.status).toBe(200);
+  });
+});

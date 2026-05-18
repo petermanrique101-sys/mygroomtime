@@ -80,9 +80,11 @@ model Tenant {
   plan                     PlanTier  @default(unpaid)
   stripeCustomerId         String?   @unique
   stripeSubscriptionId     String?   @unique
+  stripeSubscriptionItemId String?
   stripeSubscriptionStatus String?
   currentPeriodEnd         DateTime?
   pastDueAt                DateTime?
+  lastPlanChangeAt         DateTime?
   stripeConnectAccountId        String?   @unique
   stripeConnectChargesEnabled   Boolean   @default(false)
   stripeConnectPayoutsEnabled   Boolean   @default(false)
@@ -106,6 +108,22 @@ model Tenant {
   recurringSeries     RecurringSeries[]
   bookingPageRequests BookingPageRequest[]
   smsMessages         SmsMessage[]
+  planChanges         TenantPlanChange[]
+}
+
+model TenantPlanChange {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  fromPlan             PlanTier
+  toPlan               PlanTier
+  prorationAmountCents Int      @default(0)
+  stripeEventId        String?  @unique
+  createdAt            DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
 }
 
 model User {

@@ -6,6 +6,8 @@ import { registerAccounts } from './routes/accounts.js';
 import { registerSubscriptions } from './routes/subscriptions.js';
 import { registerCheckout } from './routes/checkout.js';
 import { registerPaymentIntents, registerRefunds } from './routes/payment-intents.js';
+import { registerInvoices } from './routes/invoices.js';
+import { registerBillingPortal } from './routes/billing-portal.js';
 import { registerAdmin } from './routes/admin.js';
 import type { WebhookConfig } from './webhook.js';
 
@@ -55,6 +57,8 @@ export function createApp(opts: CreateAppOptions = {}): TwinAppHandle {
   registerCheckout(app, state, cfg, getOrigin);
   registerPaymentIntents(app, state, cfg);
   registerRefunds(app, state, cfg);
+  registerInvoices(app, state);
+  registerBillingPortal(app, state, getOrigin);
   registerAdmin(app, state, cfg);
 
   return {

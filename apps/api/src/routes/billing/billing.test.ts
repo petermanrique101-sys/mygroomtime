@@ -129,13 +129,35 @@ describe('billing flow — signup → checkout → webhook flips plan', () => {
     expect(tenant?.stripeCustomerId).toMatch(/^cus_TWIN_/);
   });
 
-  it('GET /billing/portal returns 501 (chunk 13)', async () => {
+  it('GET /billing/portal returns a portal URL once Stripe customer exists', async () => {
     const t = await signup(app, 'portal');
+    const before = await app.inject({
+      method: 'GET',
+      url: '/billing/portal',
+      headers: { cookie: t.cookie },
+    });
+    // why: pre-checkout tenants have no stripeCustomerId — 409 forces them to finish
+    // signup billing before opening the portal.
+    expect(before.statusCode).toBe(409);
+
+    const checkout = await app.inject({
+      method: 'POST',
+      url: '/billing/checkout',
+      headers: { cookie: t.cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ tier: 'starter' }),
+    });
+    expect(checkout.statusCode).toBe(200);
+    const { url } = checkout.json() as { url: string };
+    await fetch(`${url}?auto=1`, { redirect: 'manual' });
+    await new Promise((r) => setTimeout(r, 200));
+
     const res = await app.inject({
       method: 'GET',
       url: '/billing/portal',
       headers: { cookie: t.cookie },
     });
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { url: string };
+    expect(body.url).toContain('/__twin_billing_portal/');
   });
 });

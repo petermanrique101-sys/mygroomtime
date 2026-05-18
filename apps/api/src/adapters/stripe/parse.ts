@@ -45,7 +45,22 @@ export function parseStripeEvent(raw: unknown): ParsedStripeEvent {
     };
   }
 
+  if (type === 'customer.subscription.created') {
+    const item = firstSubscriptionItem(obj);
+    return {
+      type: 'customer.subscription.created',
+      id,
+      subscriptionId: str(obj.id) ?? '',
+      customerId: str(obj.customer),
+      status: str(obj.status) ?? 'unknown',
+      currentPeriodEnd: num(obj.current_period_end),
+      priceId: str(item?.priceId ?? null),
+      subscriptionItemId: str(item?.id ?? null),
+    };
+  }
+
   if (type === 'customer.subscription.updated') {
+    const item = firstSubscriptionItem(obj);
     return {
       type: 'customer.subscription.updated',
       id,
@@ -53,6 +68,8 @@ export function parseStripeEvent(raw: unknown): ParsedStripeEvent {
       customerId: str(obj.customer),
       status: str(obj.status) ?? 'unknown',
       currentPeriodEnd: num(obj.current_period_end),
+      priceId: str(item?.priceId ?? null),
+      subscriptionItemId: str(item?.id ?? null),
     };
   }
 
@@ -104,6 +121,26 @@ export function parseStripeEvent(raw: unknown): ParsedStripeEvent {
 
 function bool(v: unknown): boolean {
   return v === true;
+}
+
+function firstSubscriptionItem(
+  obj: Record<string, unknown>,
+): { id: string | null; priceId: string | null } | null {
+  const items = obj.items;
+  if (!items || typeof items !== 'object') return null;
+  const data = (items as { data?: unknown }).data;
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const first = data[0];
+  if (!first || typeof first !== 'object') return null;
+  const rec = first as Record<string, unknown>;
+  const id = str(rec.id);
+  const price = rec.price;
+  let priceId: string | null = null;
+  if (typeof price === 'string') priceId = price;
+  else if (price && typeof price === 'object') {
+    priceId = str((price as Record<string, unknown>).id);
+  }
+  return { id, priceId };
 }
 
 function extractSubscriptionPeriodEnd(obj: Record<string, unknown>): number | null {

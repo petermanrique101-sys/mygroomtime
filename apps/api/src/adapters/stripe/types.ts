@@ -86,6 +86,19 @@ export type SubscriptionUpdatedEvent = {
   customerId: string | null;
   status: string;
   currentPeriodEnd: number | null;
+  priceId: string | null;
+  subscriptionItemId: string | null;
+};
+
+export type SubscriptionCreatedEvent = {
+  type: 'customer.subscription.created';
+  id: string;
+  subscriptionId: string;
+  customerId: string | null;
+  status: string;
+  currentPeriodEnd: number | null;
+  priceId: string | null;
+  subscriptionItemId: string | null;
 };
 
 export type SubscriptionDeletedEvent = {
@@ -131,12 +144,36 @@ export type UnhandledStripeEvent = {
 
 export type ParsedStripeEvent =
   | CheckoutSessionCompletedEvent
+  | SubscriptionCreatedEvent
   | SubscriptionUpdatedEvent
   | SubscriptionDeletedEvent
   | InvoicePaymentFailedEvent
   | AccountUpdatedEvent
   | PaymentIntentSucceededEvent
   | UnhandledStripeEvent;
+
+export type PlanPreview = {
+  amountDueCents: number;
+  creditCents: number;
+  chargeCents: number;
+  currentPeriodEndIso: string;
+  nextChargeCents: number;
+};
+
+export type PreviewPlanChangeInput = {
+  customerId: string;
+  subscriptionId: string;
+  newPriceId: string;
+};
+
+export type ChangePlanInput = {
+  subscriptionId: string;
+  newPriceId: string;
+  idempotencyKey: string;
+};
+
+export type CreatePortalSessionInput = { customerId: string; returnUrl: string };
+export type CreatePortalSessionOutput = { url: string };
 
 export interface StripeAdapter {
   readonly mode: StripeMode;
@@ -162,5 +199,8 @@ export interface StripeAdapter {
   confirmTwinPaymentIntent(
     input: ConfirmTwinPaymentIntentInput,
   ): Promise<ConfirmTwinPaymentIntentOutput>;
+  previewPlanChange(input: PreviewPlanChangeInput): Promise<PlanPreview>;
+  changePlan(input: ChangePlanInput): Promise<void>;
+  createPortalSession(input: CreatePortalSessionInput): Promise<CreatePortalSessionOutput>;
   verifyWebhookSignature(input: VerifyWebhookSignatureInput): ParsedStripeEvent;
 }

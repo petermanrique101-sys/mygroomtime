@@ -74,6 +74,18 @@ The booking page lives at `<slug>.localhost:5173` (works natively in Chrome/Fire
 
 To exercise live Stripe.js, set `VITE_STRIPE_PUBLISHABLE_KEY` to a real `pk_test_` key — the web will render the real Payment Element instead of the twin stub. The Stripe twin can't itself accept real Stripe.js API calls; live keys are for testing against the real Stripe sandbox.
 
+### Plan changes in dev
+
+The owner-side flow lives at `/settings/billing`:
+
+1. Click "Switch to <tier>" on any non-current tier card. The web calls `POST /settings/billing/preview-plan-change`, which proxies to the twin's `/v1/invoices/upcoming`, and renders the proration as "We'll charge $X today / We'll credit $X to your next invoice".
+2. Click "Confirm switch to <tier>" → the api calls the twin's `POST /v1/subscriptions/:id` with `proration_behavior: create_prorations`. The twin updates the in-memory subscription and immediately fires `customer.subscription.updated` to `/webhooks/stripe`. The webhook handler maps `items[0].price.id` → tier, flips `Tenant.plan`, and writes a `TenantPlanChange` audit row.
+3. The web polls `GET /settings/billing` every 2 s for up to 30 s; the card updates to the new tier within ~1 s in twin mode.
+
+"Update card / Manage subscription" hits `POST /settings/billing/portal-session` → twin's `/v1/billing_portal/sessions`. The twin returns a hosted page with a "Back to app" link (or append `?auto=1` to redirect immediately). In live, Stripe's real Customer Portal opens.
+
+Plan-change calls use a 5-minute-bucketed idempotency key (`tenant-<id>-<tier>-<bucket>`), so a double-click within the same window is one Stripe call and one webhook delivery.
+
 ## Landing page
 
 The static site at the repo root (`index.html` + `assets/` + `CNAME`) is served by GitHub Pages at [mygroomtime.com](https://mygroomtime.com). Edit those files directly to ship landing-page changes; no build step.

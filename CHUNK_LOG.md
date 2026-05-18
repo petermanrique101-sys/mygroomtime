@@ -39,8 +39,8 @@ Process discipline:
 | 11 | Public booking page (read-only) with subdomain routing | ✅ done, committed |
 | 12 | Public booking submit + Stripe Connect deposit | ✅ done, committed |
 | 13 | Tier upgrade/downgrade + Stripe Customer Portal | ✅ done, committed |
-| **14** | **Twin: Twilio + adapter + outbound SMS + booking confirmation SMS** | **← next** |
-| 15 | Scheduled SMS jobs (48h, 2h, post-appt) | pending |
+| 14 | Twin: Twilio + adapter + outbound SMS + booking confirmation SMS | ✅ done, committed |
+| **15** | **Scheduled SMS jobs (48h, 2h, post-appt) via BullMQ** | **← next** |
 | 16 | Route optimization + day route view | pending |
 | 17 | Recurring appointments | pending |
 | 18 | Offline support (PWA, mutation queue) | pending |
@@ -70,6 +70,17 @@ Plan enum: `unpaid | starter | pro | business | past_due | canceled`.
 - **Pro** ($99): public booking page enabled, route optimization, recurring, GCal sync.
 - **Business** ($149): + multi-vehicle dispatch + payroll splits.
 - Public booking page: `starter`/`unpaid`/`canceled` → 404; `past_due` → render with disabled Book button; `pro`/`business` → normal.
+
+### Outbound SMS + opt-out (chunk 14)
+- **Adapter is the enforcement boundary.** Tier gate (Pro+), opt-out lookup, idempotency dedupe, mandatory "Reply STOP to opt out." suffix, and 160-char truncation all live in `apps/api/src/adapters/twilio/compose.ts`. Call sites just call `sendSms(...)` and read the result; they never enforce the rules themselves.
+- **`SmsMessage` is the application-level idempotency truth.** Outbound rows get an idempotency key; the adapter pre-flight queries the table for `pending`/`sent` rows with the same key and short-circuits before any Twilio call. The twin also dedupes by `(From, To, Body)` within a 60s window as a wire-level safety net.
+- **STOP/START keyword sets are locked**: STOP set = `STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT`; START set = `START, UNSTOP, YES`. Case-insensitive on a trimmed body. These match Twilio's canonical handling.
+- **Inbound webhook signature verified FIRST.** `X-Twilio-Signature` = base64 HMAC-SHA1 of `URL + sorted ${key}${value} concat` (no separator). Invalid → 400 + bail, no DB touch. Replay-safe via chunk-10 `UNIQUE(source, eventId)` on the MessageSid.
+- **No retries on send failure in v1.** Log it, record `SmsMessage.status='error'`, move on. Chunk 22's operator log will surface failures.
+- **Single platform from-number for v1.** Per-tenant numbers / Messaging Service routing is v2 / chunk 21+.
+- **STOP suffix is mandatory** on every outbound. The adapter appends; callers pass the bare body. Truncation (>160 with suffix) drops to `…` before the suffix and emits a warn-level log for chunk 22's surfacing.
+- **Tier-gated and opt-out sends are NOT errors** — they're recorded as `SmsMessage(status='skipped_tier'|'skipped_opt_out')` and the adapter returns `{ sent: false, reason }`. Future chunks (15 reminders, 21+) just check `sent: true` and don't have to repeat the policy.
+- **Phone helper is canonical**: `apps/api/src/services/phone.ts` exports `normalizePhone`, `tenDigitSuffix`, `suffixesMatch`, `toDialFormat`. Chunk 12's inline normalize is gone — anyone matching by phone should import these. International numbers are still 10-digit-suffix for v1; libphonenumber upgrade flagged in `phone.ts` for v2.
 
 ### Tier upgrade/downgrade + proration (chunk 13)
 - **Tier flip is webhook-canonical, not route-canonical.** `POST /settings/billing/change-plan` returns 202 + `{ pending: true, willTakeEffect: 'webhook' }`. The actual `Tenant.plan` mutation lives in the `customer.subscription.updated` handler. Web polls `GET /settings/billing` every 2s after confirm until the plan flips.
@@ -240,6 +251,18 @@ Tenants don't get a Vehicle on signup. `ensureDefaultVehicle(tenantId)` lazy-cre
 - 60 req/min rate limit per IP per slug on public endpoints.
 - `Tenant.phone` added in migration.
 - 13 new api tests, 10 subdomain tests, 5 public web tests. 117 api tests total.
+
+### Chunk 14 — Twilio twin + adapter + booking confirmation SMS
+- New `twins/twilio` package mirrors `twins/stripe` shape. `POST /2010-04-01/Accounts/:sid/Messages.json` for outbound + `POST /__twin_inbound` test helper that fires properly-signed POSTs to the api's inbound webhook (lets tests simulate "customer texted STOP" without spinning up real Twilio).
+- Adapter: `apps/api/src/adapters/twilio/{live,twin}.ts` + shared `compose.ts` for the pre-flight (tier gate / opt-out / idempotency / STOP suffix / 160-char truncation). Both implementations are thin wrappers over `compose.preflightSend` → actual send.
+- Schema: `20260520000000_sms_opt_out_and_messages` adds `Client.smsOptOutAt`, renames `toPhone/fromPhone → toE164/fromE164`, adds outbound `idempotencyKey` (partial unique index), `sentAt`, tightens `clientId` FK to cascade. `SmsStatus` enum: `pending | sent | error | skipped_tier | skipped_opt_out`.
+- Inbound `/webhooks/twilio` verifies `X-Twilio-Signature` first (HMAC-SHA1 of URL + alpha-sorted form-param `${key}${value}` concat, base64). Dedupes by MessageSid via chunk-10 WebhookEvent. STOP/START canonical sets; case-insensitive trimmed body match. Matches Client by 10-digit phone suffix.
+- Booking confirmation wired in `payment-intent-succeeded.ts:203`. Idempotency key `booking-confirmation:${appointmentId}`. The chunk-12 TODO marker is gone.
+- Phone helper extracted from chunk 12 into `apps/api/src/services/phone.ts` (`normalizePhone`, `tenDigitSuffix`, `suffixesMatch`, `toDialFormat`). chunk-12's inline copy is removed.
+- PII redact list extended for `toE164`, `fromE164`, SMS `body`. Phone numbers still allowed in customer-display rendering paths (UI), never in logs.
+- Web: opt-out badge on `clients/detail.tsx`; opt-out banner on `calendar/new-appointment-sheet.tsx` (doesn't block submit, just informs).
+- Signature gotcha worth knowing for chunk 22 / future twin work: base64 padding bytes after the `=` decode to nothing — a test that tampers the trailing characters can still "verify." The fix is to flip a leading char in tamper tests. Documented in `twins/twilio/src/sign.test.ts`.
+- 32 → (api) test files, 172 tests pass. New `twins/twilio` suite + integration tests.
 
 ### Chunk 13 — Tier upgrade/downgrade + Customer Portal
 - Twin: `POST /v1/billing_portal/sessions`, `POST /v1/invoices/upcoming` (simple linear-proration computation: `credit = currentPrice * (timeRemaining/period); charge = newPrice * (timeRemaining/period); amount_due = max(0, charge - credit)`), idempotency wired into `POST /v1/subscriptions/:id` so retried updates produce one effect.

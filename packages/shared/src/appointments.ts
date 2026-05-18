@@ -166,6 +166,14 @@ export const AppointmentOutputSchema = z.object({
   notes: z.string(),
   timeLocked: z.boolean(),
   canceledAt: z.string().nullable(),
+  onTheWayAt: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  noShowAt: z.string().nullable(),
+  tipCents: z.number().int().nonnegative(),
+  finalAmountCents: z.number().int().nullable(),
+  balanceChargeId: z.string().nullable(),
+  depositChargeId: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   pet: PetSummarySchema,
@@ -189,6 +197,71 @@ export const AppointmentMutationResponseSchema = z.object({
   warning: AppointmentMutationWarningSchema.nullable().optional(),
 });
 export type AppointmentMutationResponse = z.infer<typeof AppointmentMutationResponseSchema>;
+
+export const APPOINTMENT_TRANSITION_TARGETS = [
+  'on_the_way',
+  'started',
+  'no_show',
+  'canceled',
+] as const;
+export type AppointmentTransitionTarget = (typeof APPOINTMENT_TRANSITION_TARGETS)[number];
+
+export const AppointmentStatusUpdateRequestSchema = z.object({
+  status: z.enum(APPOINTMENT_TRANSITION_TARGETS),
+});
+export type AppointmentStatusUpdateRequest = z.infer<typeof AppointmentStatusUpdateRequestSchema>;
+
+export const AppointmentTransitionErrorSchema = z.object({
+  error: z.literal('invalid_transition'),
+  message: z.string(),
+  reason: z.enum(['terminal', 'invalid_edge', 'unknown_status']),
+  current: z.enum(APPOINTMENT_STATUSES),
+  attempted: z.enum(APPOINTMENT_STATUSES),
+});
+export type AppointmentTransitionError = z.infer<typeof AppointmentTransitionErrorSchema>;
+
+export const AppointmentCompleteRequestSchema = z.object({
+  tipCents: z.number().int().min(0).max(100_000),
+});
+export type AppointmentCompleteRequest = z.infer<typeof AppointmentCompleteRequestSchema>;
+
+export const AppointmentCompleteResponseSchema = z.object({
+  appointment: z.lazy(() => AppointmentOutputSchema),
+  finalAmountCents: z.number().int().nonnegative(),
+  balanceChargeId: z.string().nullable(),
+  alreadyCompleted: z.boolean(),
+});
+export type AppointmentCompleteResponse = z.infer<typeof AppointmentCompleteResponseSchema>;
+
+export const AppointmentRebookRequestSchema = z.object({
+  intervalWeeks: z.number().int().min(1).max(26),
+});
+export type AppointmentRebookRequest = z.infer<typeof AppointmentRebookRequestSchema>;
+
+export const RecurringSeriesOutputSchema = z.object({
+  id: z.string(),
+  intervalWeeks: z.number().int().min(1).max(26),
+  nextDueDate: z.string(),
+  active: z.boolean(),
+});
+export type RecurringSeriesOutput = z.infer<typeof RecurringSeriesOutputSchema>;
+
+export const AppointmentRebookResponseSchema = z.object({
+  recurringSeries: RecurringSeriesOutputSchema,
+  nextAppointment: z.lazy(() => AppointmentOutputSchema),
+  reusedSeries: z.boolean(),
+});
+export type AppointmentRebookResponse = z.infer<typeof AppointmentRebookResponseSchema>;
+
+export const AppointmentRebookConflictSchema = z.object({
+  error: z.literal('rebook_conflict'),
+  message: z.string(),
+  conflict: z.object({
+    reason: z.enum(APPOINTMENT_CONFLICT_REASONS),
+    detail: AppointmentConflictDetailSchema,
+  }),
+});
+export type AppointmentRebookConflict = z.infer<typeof AppointmentRebookConflictSchema>;
 
 export const AppointmentOverlapErrorSchema = z.object({
   error: z.literal('appointment_overlap'),

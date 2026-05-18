@@ -7,6 +7,9 @@ import updateAppointmentRoute from './update.js';
 import deleteAppointmentRoute from './delete.js';
 import routeViewRoute from './route-view.js';
 import routeApplyRoute from './route-apply.js';
+import appointmentStatusRoutes from './status.js';
+import appointmentCompleteRoute from './complete.js';
+import appointmentRebookRoute from './rebook.js';
 
 export default async function appointmentRoutes(app: FastifyInstance): Promise<void> {
   await listAppointmentsRoute(app);
@@ -15,6 +18,9 @@ export default async function appointmentRoutes(app: FastifyInstance): Promise<v
   // captured by /appointments/:id (Fastify is order-insensitive but explicit is clearer).
   await routeViewRoute(app);
   await routeApplyRoute(app);
+  await appointmentStatusRoutes(app);
+  await appointmentCompleteRoute(app);
+  await appointmentRebookRoute(app);
   await getAppointmentRoute(app);
   await createAppointmentRoute(app);
   await updateAppointmentRoute(app);

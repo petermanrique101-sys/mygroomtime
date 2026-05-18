@@ -1,8 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import type {
-  AppointmentCreateRequest,
   AppointmentOutput,
   ClientWithPetsOutput,
   ServiceOutput,
@@ -10,15 +9,12 @@ import type {
 import { useAuthOptional } from '../../lib/auth-context';
 import { RouteView } from './route-view';
 import { useRouteOptimization } from './use-route-optimization';
+import { CompleteModal } from './complete-modal';
+import { useLifecycle } from './use-lifecycle';
 import { listClients, getClient } from '../../lib/clients-api';
 import { listServices } from '../../lib/services-api';
-import {
-  cancelAppointment,
-  createAppointment,
-  getDayBuffers,
-  listAppointments,
-  updateAppointment,
-} from '../../lib/appointments-api';
+import { getDayBuffers, listAppointments } from '../../lib/appointments-api';
+import { useCalendarMutations } from './use-calendar-mutations';
 import {
   formatHeaderLabel,
   rangeForView,
@@ -49,7 +45,6 @@ const APPT_KEY = (view: CalendarView, anchorIso: string): readonly unknown[] =>
 const BUFFER_KEY = (dayIso: string): readonly unknown[] => ['appointment-buffers', dayIso] as const;
 
 export default function CalendarRoute(): JSX.Element {
-  const qc = useQueryClient();
   const auth = useAuthOptional();
   const session = auth?.session ?? null;
   const { view, setView } = useViewMode();
@@ -61,6 +56,7 @@ export default function CalendarRoute(): JSX.Element {
   const [now, setNow] = useState<Date>(() => new Date());
   const [showRoute, setShowRoute] = useState(false);
   const routeOpt = useRouteOptimization(anchor, (msg) => setToast(msg));
+  const lifecycle = useLifecycle((msg) => setToast(msg));
 
   const range = useMemo(() => rangeForView(view, anchor), [view, anchor]);
   const dayIso = useMemo(() => startOfDay(anchor).toISOString(), [anchor]);
@@ -116,94 +112,20 @@ export default function CalendarRoute(): JSX.Element {
     },
   });
 
-  const createMut = useMutation({
-    mutationFn: async (payload: AppointmentCreateRequest) => {
-      const res = await createAppointment(payload);
-      if (!res.ok) {
-        const e = new Error(res.error.message);
-        (e as Error & { status?: number }).status = res.error.status;
-        throw e;
-      }
-      return res.data;
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['appointments'] });
-      void qc.invalidateQueries({ queryKey: ['appointment-buffers'] });
-      setSheetOpen(false);
-    },
-    onError: (err) => {
-      const status = (err as Error & { status?: number }).status;
-      if (status === 409) {
-        setToast(err.message);
-      }
-    },
+  const apptQueryKey = useMemo(
+    () => APPT_KEY(view, range.from.toISOString()),
+    [view, range.from],
+  );
+  const mutations = useCalendarMutations({
+    apptQueryKey,
+    onToast: setToast,
+    onCloseSheet: () => setSheetOpen(false),
+    onCloseDetail: () => setOpenDetailId(null),
   });
-
-  const cancelMut = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await cancelAppointment(id);
-      if (!res.ok) throw new Error(res.error.message);
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['appointments'] });
-      void qc.invalidateQueries({ queryKey: ['appointment-buffers'] });
-      setOpenDetailId(null);
-    },
-    onError: (err) => setToast((err as Error).message),
-  });
-
-  const notesMut = useMutation({
-    mutationFn: async (args: { id: string; notes: string }) => {
-      const res = await updateAppointment(args.id, { notes: args.notes });
-      if (!res.ok) throw new Error(res.error.message);
-      return res.data;
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['appointments'] });
-    },
-    onError: (err) => setToast((err as Error).message),
-  });
-
-  const rescheduleMut = useMutation({
-    mutationFn: async (args: { id: string; start: Date }) => {
-      const res = await updateAppointment(args.id, { start: args.start.toISOString() });
-      if (!res.ok) {
-        const e = new Error(res.error.message);
-        (e as Error & { status?: number; payload?: unknown }).status = res.error.status;
-        throw e;
-      }
-      return res.data;
-    },
-    onMutate: async (args) => {
-      await qc.cancelQueries({ queryKey: ['appointments'] });
-      const previous = qc.getQueryData<AppointmentOutput[]>(
-        APPT_KEY(view, range.from.toISOString()),
-      );
-      if (previous) {
-        const optimistic = previous.map((a) =>
-          a.id === args.id
-            ? {
-                ...a,
-                start: args.start.toISOString(),
-                end: new Date(args.start.getTime() + a.durationMin * 60_000).toISOString(),
-              }
-            : a,
-        );
-        qc.setQueryData(APPT_KEY(view, range.from.toISOString()), optimistic);
-      }
-      return { previous };
-    },
-    onError: (err, _args, ctx) => {
-      if (ctx?.previous) {
-        qc.setQueryData(APPT_KEY(view, range.from.toISOString()), ctx.previous);
-      }
-      setToast((err as Error).message);
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['appointments'] });
-      void qc.invalidateQueries({ queryKey: ['appointment-buffers'] });
-    },
-  });
+  const createMut = mutations.create;
+  const cancelMut = mutations.cancel;
+  const notesMut = mutations.notes;
+  const rescheduleMut = mutations.reschedule;
 
   const appointments: AppointmentOutput[] = apptQuery.data ?? [];
   const services: ServiceOutput[] = servicesQuery.data ?? [];
@@ -384,8 +306,33 @@ export default function CalendarRoute(): JSX.Element {
           onSaveNotes={async (id, notes) => {
             await notesMut.mutateAsync({ id, notes });
           }}
-          busy={cancelMut.isPending || notesMut.isPending}
+          onMarkOnTheWay={(id) => lifecycle.markStatus(id, 'on_the_way')}
+          onMarkStarted={(id) => lifecycle.markStatus(id, 'started')}
+          onMarkNoShow={(id) => lifecycle.markStatus(id, 'no_show')}
+          onOpenComplete={(a) => {
+            setOpenDetailId(null);
+            lifecycle.openComplete(a);
+          }}
+          onOpenRebook={(a) => {
+            setOpenDetailId(null);
+            lifecycle.openRebook(a);
+          }}
+          busy={cancelMut.isPending || notesMut.isPending || lifecycle.busy}
         />
+
+        {lifecycle.modalAppointment ? (
+          <CompleteModal
+            appointment={lifecycle.modalAppointment}
+            defaultIntervalWeeks={6}
+            busy={lifecycle.busy}
+            completeError={lifecycle.completeError}
+            rebookError={lifecycle.rebookError}
+            rebookConflictMessage={lifecycle.rebookConflictMessage}
+            onComplete={lifecycle.complete}
+            onRebook={lifecycle.rebook}
+            onClose={lifecycle.closeModal}
+          />
+        ) : null}
 
         <Toast message={toast} onDismiss={() => setToast(null)} />
       </div>

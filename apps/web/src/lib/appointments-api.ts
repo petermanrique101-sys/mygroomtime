@@ -1,9 +1,14 @@
 import type {
   AppointmentBuffersResponse,
+  AppointmentCompleteRequest,
+  AppointmentCompleteResponse,
   AppointmentCreateRequest,
   AppointmentListResponse,
   AppointmentMutationResponse,
   AppointmentOutput,
+  AppointmentRebookRequest,
+  AppointmentRebookResponse,
+  AppointmentStatusUpdateRequest,
   AppointmentUpdateRequest,
 } from '@mygroomtime/shared';
 import { apiFetch, type ApiError } from './api.js';
@@ -52,4 +57,34 @@ export async function getDayBuffers(
 ): Promise<Result<AppointmentBuffersResponse>> {
   const qs = `?date=${encodeURIComponent(dateIso)}`;
   return apiFetch<AppointmentBuffersResponse>(`/appointments/buffers${qs}`);
+}
+
+export async function patchAppointmentStatus(
+  id: string,
+  payload: AppointmentStatusUpdateRequest,
+): Promise<Result<AppointmentMutationResponse>> {
+  return apiFetch<AppointmentMutationResponse>(`/appointments/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function completeAppointmentApi(
+  id: string,
+  payload: AppointmentCompleteRequest,
+): Promise<Result<AppointmentCompleteResponse>> {
+  return apiFetch<AppointmentCompleteResponse>(`/appointments/${id}/complete`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function rebookAppointment(
+  id: string,
+  payload: AppointmentRebookRequest,
+): Promise<Result<AppointmentRebookResponse>> {
+  return apiFetch<AppointmentRebookResponse>(`/appointments/${id}/rebook`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }

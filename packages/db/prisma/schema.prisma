@@ -275,6 +275,10 @@ model Appointment {
   notes             String            @default("")
   mutationUuid      String?           @unique
   canceledAt        DateTime?
+  onTheWayAt        DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  noShowAt          DateTime?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -290,6 +294,7 @@ model Appointment {
   @@index([tenantId])
   @@index([tenantId, scheduledStart])
   @@index([tenantId, status, scheduledStart])
+  @@index([tenantId, completedAt])
 }
 
 model RecurringSeries {

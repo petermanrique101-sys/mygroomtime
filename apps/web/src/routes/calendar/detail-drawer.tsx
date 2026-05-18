@@ -1,12 +1,23 @@
 import { useEffect, useState } from 'react';
 import type { AppointmentOutput } from '@mygroomtime/shared';
 import { centsToDollarString } from '../settings/money';
+import {
+  CompletedSummary,
+  StatusActionBar,
+  TerminalBadge,
+} from './status-action-bar';
+import { NoShowConfirm } from './no-show-confirm';
 
 type Props = {
   appointment: AppointmentOutput | null;
   onClose: () => void;
   onCancel: (id: string) => void;
   onSaveNotes: (id: string, notes: string) => Promise<void>;
+  onMarkOnTheWay: (id: string) => void;
+  onMarkStarted: (id: string) => void;
+  onMarkNoShow: (id: string) => void;
+  onOpenComplete: (a: AppointmentOutput) => void;
+  onOpenRebook: (a: AppointmentOutput) => void;
   busy: boolean;
 };
 
@@ -28,17 +39,24 @@ export function DetailDrawer({
   onClose,
   onCancel,
   onSaveNotes,
+  onMarkOnTheWay,
+  onMarkStarted,
+  onMarkNoShow,
+  onOpenComplete,
+  onOpenRebook,
   busy,
 }: Props): JSX.Element | null {
   const [notes, setNotes] = useState('');
   const [editingNotes, setEditingNotes] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [confirmingNoShow, setConfirmingNoShow] = useState(false);
 
   useEffect(() => {
     if (appointment) {
       setNotes(appointment.notes);
       setEditingNotes(false);
       setConfirmingCancel(false);
+      setConfirmingNoShow(false);
     }
   }, [appointment?.id, appointment?.notes]);
 
@@ -97,7 +115,8 @@ export function DetailDrawer({
           <Row label="Service">
             <div className="font-medium">{appointment.serviceNameSnapshot}</div>
             <div className="text-xs text-gray-500">
-              ${centsToDollarString(appointment.servicePriceCentsSnapshot)} · {appointment.serviceDurationMinSnapshot} min
+              ${centsToDollarString(appointment.servicePriceCentsSnapshot)} ·{' '}
+              {appointment.serviceDurationMinSnapshot} min
             </div>
           </Row>
 
@@ -169,14 +188,33 @@ export function DetailDrawer({
             )}
           </Row>
 
-          {appointment.status === 'canceled' ? (
-            <div className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600">
-              This appointment is canceled.
-            </div>
+          {appointment.status === 'completed' ? (
+            <CompletedSummary
+              completedAt={appointment.completedAt}
+              finalAmountCents={appointment.finalAmountCents}
+              onRebook={() => onOpenRebook(appointment)}
+              busy={busy}
+            />
+          ) : appointment.status === 'canceled' || appointment.status === 'no_show' ? (
+            <TerminalBadge
+              status={appointment.status}
+              noShowAt={appointment.noShowAt}
+              canceledAt={appointment.canceledAt}
+            />
+          ) : confirmingNoShow ? (
+            <NoShowConfirm
+              petName={appointment.pet.name}
+              depositCents={appointment.serviceDepositCentsSnapshot}
+              busy={busy}
+              onConfirm={() => onMarkNoShow(appointment.id)}
+              onCancel={() => setConfirmingNoShow(false)}
+            />
           ) : confirmingCancel ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm">
               <p className="mb-2 font-medium text-red-800">
-                This will cancel the appointment. Continue?
+                {appointment.serviceDepositCentsSnapshot > 0
+                  ? `Cancel this appointment? The $${centsToDollarString(appointment.serviceDepositCentsSnapshot)} deposit will be refunded to the customer.`
+                  : 'Cancel this appointment? No deposit was collected.'}
               </p>
               <div className="flex gap-2">
                 <button
@@ -197,13 +235,16 @@ export function DetailDrawer({
               </div>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmingCancel(true)}
-              className="block min-h-[44px] w-full rounded-lg border border-red-300 px-4 text-sm font-medium text-red-700"
-            >
-              Cancel appointment
-            </button>
+            <StatusActionBar
+              status={appointment.status}
+              busy={busy}
+              onOnTheWay={() => onMarkOnTheWay(appointment.id)}
+              onStarted={() => onMarkStarted(appointment.id)}
+              onComplete={() => onOpenComplete(appointment)}
+              onNoShow={() => setConfirmingNoShow(true)}
+              onCancel={() => setConfirmingCancel(true)}
+              onRebook={() => onOpenRebook(appointment)}
+            />
           )}
         </div>
       </div>

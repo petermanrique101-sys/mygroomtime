@@ -8,6 +8,8 @@ import {
 import type { BookingPageRequest } from '@mygroomtime/db';
 import type { PaymentIntentSucceededEvent } from '../../../../adapters/stripe/types.js';
 import { normalizePhone, tenDigitSuffix, toDialFormat } from '../../../../services/phone.js';
+import { formatAppointmentDateTime } from '../../../../services/format-datetime.js';
+import { enqueueAppointmentReminders } from '../../../../services/reminder-schedule.js';
 
 export type HandlerResult = { ok: true } | { ok: false; reason: string };
 
@@ -85,16 +87,6 @@ async function ensureVehicle(scoped: TenantScopedDb): Promise<string> {
 
 function dollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
-}
-
-function formatStart(d: Date): string {
-  return d.toLocaleString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
 }
 
 export function makePaymentIntentSucceededHandler(app: FastifyInstance) {
@@ -179,10 +171,10 @@ export function makePaymentIntentSucceededHandler(app: FastifyInstance) {
 
     const tenantRow = await db.global.tenant.findUnique({
       where: { id: tenantId },
-      select: { businessName: true },
+      select: { businessName: true, smsRemindersEnabled: true },
     });
     const businessName = tenantRow?.businessName ?? 'MyGroomTime';
-    const startFormatted = formatStart(row.requestedStart);
+    const startFormatted = formatAppointmentDateTime(row.requestedStart);
 
     if (row.ownerEmail) {
       await app.adapters.email.sendBookingConfirmation({
@@ -219,6 +211,19 @@ export function makePaymentIntentSucceededHandler(app: FastifyInstance) {
           'booking confirmation SMS skipped or failed (see SmsMessage row)',
         );
       }
+    }
+
+    if (app.reminderQueue && tenantRow?.smsRemindersEnabled) {
+      await enqueueAppointmentReminders(
+        app.reminderQueue,
+        {
+          id: appointment.id,
+          scheduledStart: appointment.scheduledStart,
+          durationMin: appointment.durationMin,
+        },
+        tenantId,
+        true,
+      );
     }
 
     return PROMOTED_OK;

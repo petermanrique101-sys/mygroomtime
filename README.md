@@ -84,6 +84,26 @@ Outbound SMS is **Pro+ only** — sends from a Starter / unpaid / past_due / can
 
 Every outbound body is auto-appended with " Reply STOP to opt out." and truncated to 160 chars if needed. The booking-confirmation handler passes the bare body; the adapter appends the suffix.
 
+### Scheduled SMS reminders in dev
+
+Pro+ tenants can flip `/settings/sms` to send a 48-hour confirmation, a 2-hour heads-up, and a day-after thank-you. Reminders are scheduled in BullMQ on Redis at appointment-create time and rescheduled on PATCH / removed on DELETE. They fire at the scheduled wall-clock time of the customer the appointment belongs to — no quiet-hours awareness in v1.
+
+Seeding an appointment with reminders is just:
+
+1. Promote a tenant to Pro: `UPDATE "Tenant" SET plan='pro', "smsRemindersEnabled"=true WHERE id='…'`.
+2. Sign in as the owner → `/settings/sms` shows the toggle on.
+3. Create an appointment via the calendar (or `POST /appointments`). Three BullMQ jobs land with deterministic ids: `reminder-48h.<appointmentId>`, `reminder-2h.<appointmentId>`, `reminder-post.<appointmentId>`.
+
+To exercise the worker without waiting hours, promote a delayed job so it runs immediately:
+
+```bash
+pnpm --filter @mygroomtime/api dev:fire-reminder <appointmentId> reminder-48h
+```
+
+The worker fires `app.adapters.twilio.sendSms`, which writes the usual audit row. Watch via `curl http://localhost:4243/__twin_messages`.
+
+Toggle-off is intentionally non-destructive: existing scheduled jobs stay in the queue and are skipped at fire time by the adapter's tier / opt-out checks. Toggling back on does not backfill reminders for existing future appointments — only newly created or rescheduled appointments enqueue jobs.
+
 ## Public booking pages in dev
 
 The booking page lives at `<slug>.localhost:5173` (works natively in Chrome/Firefox without a hosts file). The tenant must be on the Pro or Business plan **and** Stripe Connect must be onboarded with `chargesEnabled=true` — otherwise the page renders with the Book button disabled.

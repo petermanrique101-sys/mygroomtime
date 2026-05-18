@@ -17,6 +17,7 @@ import { serializeAppointment } from './serialize.js';
 import { findOverlappingAppointment } from './overlap.js';
 import { geocodeOverride } from './geocode-override.js';
 import { computeEnd } from './serialize.js';
+import { enqueueAppointmentReminders } from '../../services/reminder-schedule.js';
 
 export default async function createAppointmentRoute(app: FastifyInstance): Promise<void> {
   app.post(
@@ -149,6 +150,26 @@ export default async function createAppointmentRoute(app: FastifyInstance): Prom
         reply.code(500).send({ error: 'internal', message: 'Could not load created appointment.' });
         return;
       }
+
+      if (app.reminderQueue) {
+        const tenantRow = await db.global.tenant.findUnique({
+          where: { id: auth.tenant.id },
+          select: { smsRemindersEnabled: true },
+        });
+        if (tenantRow?.smsRemindersEnabled) {
+          await enqueueAppointmentReminders(
+            app.reminderQueue,
+            {
+              id: hydrated.id,
+              scheduledStart: hydrated.scheduledStart,
+              durationMin: hydrated.durationMin,
+            },
+            auth.tenant.id,
+            true,
+          );
+        }
+      }
+
       const body: AppointmentMutationResponse = {
         appointment: serializeAppointment(hydrated, hydrated.pet, hydrated.client),
         warning,

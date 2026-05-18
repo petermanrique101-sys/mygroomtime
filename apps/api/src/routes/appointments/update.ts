@@ -14,6 +14,7 @@ import { canPlaceAppointment } from '../../services/conflict.js';
 import { loadTenantDefaultBufferMin } from '../../services/buffers.js';
 import { resolveAppointmentCoords } from '../../services/address.js';
 import { conflictMessage } from './conflict-message.js';
+import { rescheduleAppointmentReminders } from '../../services/reminder-schedule.js';
 
 type Params = { id: string };
 
@@ -115,6 +116,27 @@ export default async function updateAppointmentRoute(app: FastifyInstance): Prom
         reply.code(500).send({ error: 'internal', message: 'Could not reload appointment.' });
         return;
       }
+
+      const startChanged =
+        data.scheduledStart !== undefined &&
+        (data.scheduledStart as Date).getTime() !== existing.scheduledStart.getTime();
+      if (startChanged && app.reminderQueue) {
+        const tenantRow = await db.global.tenant.findUnique({
+          where: { id: auth.tenant.id },
+          select: { smsRemindersEnabled: true },
+        });
+        await rescheduleAppointmentReminders(
+          app.reminderQueue,
+          {
+            id: hydrated.id,
+            scheduledStart: hydrated.scheduledStart,
+            durationMin: hydrated.durationMin,
+          },
+          auth.tenant.id,
+          tenantRow?.smsRemindersEnabled === true,
+        );
+      }
+
       const body: AppointmentMutationResponse = {
         appointment: serializeAppointment(hydrated, hydrated.pet, hydrated.client),
         warning,

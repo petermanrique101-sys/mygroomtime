@@ -3,6 +3,7 @@ import type { SessionStore } from '../adapters/session/index.js';
 import type { EmailAdapter } from '../adapters/email/index.js';
 import type { Adapters } from '../adapters/index.js';
 import type { AppEnv } from '../config/env.js';
+import type { ReminderQueue, ReminderWorker } from '../queue/connection.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -10,6 +11,8 @@ declare module 'fastify' {
     adapters: Adapters;
     sessionStore: SessionStore;
     emailAdapter: EmailAdapter;
+    reminderQueue: ReminderQueue | null;
+    reminderWorker: ReminderWorker | null;
   }
   interface FastifyRequest {
     auth?: {

@@ -16,6 +16,11 @@ const SECTIONS: { to: string; title: string; description: string }[] = [
     title: 'Billing',
     description: 'Your plan, proration preview, and Stripe customer portal.',
   },
+  {
+    to: '/settings/sms',
+    title: 'SMS reminders',
+    description: '48-hour, 2-hour, and post-appointment text reminders for customers.',
+  },
 ];
 
 export default function SettingsIndexRoute(): JSX.Element {

@@ -91,6 +91,7 @@ model Tenant {
   stripeConnectStatusUpdatedAt  DateTime?
   defaultServiceAreaZips   String[]  @default([])
   defaultBufferMinutes     Int       @default(15)
+  smsRemindersEnabled      Boolean   @default(false)
   depotAddressStreet       String?
   depotAddressCity         String?
   depotAddressZip          String?

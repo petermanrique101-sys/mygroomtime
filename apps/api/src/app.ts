@@ -2,11 +2,21 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyCors from '@fastify/cors';
 import fastifyRateLimit from '@fastify/rate-limit';
+import type { Redis } from 'ioredis';
 import type { HealthCheck } from '@mygroomtime/shared';
 import { loadEnv, type AppEnv } from './config/env.js';
 import type { SessionStore } from './adapters/session/index.js';
 import type { EmailAdapter } from './adapters/email/index.js';
 import { createAdapters, type Adapters } from './adapters/index.js';
+import {
+  closeReminderInfra,
+  createReminderQueue,
+  createReminderRedis,
+  createReminderWorker,
+  type ReminderQueue,
+  type ReminderWorker,
+} from './queue/connection.js';
+import { createReminderHandler } from './queue/reminder-worker.js';
 import authRoutes from './routes/auth/index.js';
 import probeRoutes from './routes/probe.js';
 import clientRoutes from './routes/clients/index.js';
@@ -18,12 +28,19 @@ import settingsRoutes from './routes/settings/index.js';
 import stripeWebhookRoute from './routes/webhooks/stripe/index.js';
 import twilioWebhookRoute from './routes/webhooks/twilio/index.js';
 
+export type ReminderInfra = {
+  queue: ReminderQueue;
+  worker: ReminderWorker | null;
+  connection: Redis | null;
+};
+
 export type CreateAppOptions = {
   logger?: boolean;
   env?: AppEnv;
   sessionStore?: SessionStore;
   emailAdapter?: EmailAdapter;
   adapters?: Partial<Adapters>;
+  reminderInfra?: ReminderInfra | null;
 };
 
 const PII_REDACT_PATHS = [
@@ -78,8 +95,45 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<FastifyIns
   app.decorate('sessionStore', adapters.session);
   app.decorate('emailAdapter', adapters.email);
 
+  // why: caller can pre-construct the queue (chunk-15 tests do this with the dev Redis
+  // container) or pass `null` to skip the worker entirely. Tests that don't exercise the
+  // queue default to null so they don't open Redis sockets to a non-existent host.
+  // In production startup, opts.reminderInfra is undefined and we build a live queue+worker
+  // against env.redisUrl.
+  let reminderInfra: ReminderInfra | null;
+  if (opts.reminderInfra === null) {
+    reminderInfra = null;
+  } else if (opts.reminderInfra) {
+    reminderInfra = opts.reminderInfra;
+  } else if (env.nodeEnv === 'test') {
+    reminderInfra = null;
+  } else {
+    const connection = createReminderRedis(env.redisUrl);
+    const queue = createReminderQueue(connection);
+    const worker = createReminderWorker(
+      createReminderRedis(env.redisUrl),
+      createReminderHandler({ twilio: adapters.twilio, log: app.log }),
+    );
+    reminderInfra = { queue, worker, connection };
+  }
+
+  if (reminderInfra) {
+    app.decorate('reminderQueue', reminderInfra.queue);
+    app.decorate('reminderWorker', reminderInfra.worker);
+  } else {
+    app.decorate('reminderQueue', null);
+    app.decorate('reminderWorker', null);
+  }
+
   app.addHook('onClose', async () => {
     await adapters.session.close();
+    if (reminderInfra) {
+      await closeReminderInfra(
+        reminderInfra.worker,
+        reminderInfra.queue,
+        reminderInfra.connection,
+      );
+    }
   });
 
   // why: webhook handlers verify Stripe signatures over the raw bytes. The default JSON

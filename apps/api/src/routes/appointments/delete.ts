@@ -3,6 +3,7 @@ import { db, AppointmentStatus } from '@mygroomtime/db';
 import { requireAuth } from '../../middleware/require-auth.js';
 import { requirePaidPlan } from '../../middleware/require-paid-plan.js';
 import { findActiveAppointment } from './find.js';
+import { removeAppointmentReminders } from '../../services/reminder-schedule.js';
 
 type Params = { id: string };
 
@@ -30,6 +31,9 @@ export default async function deleteAppointmentRoute(app: FastifyInstance): Prom
             canceledAt: new Date(),
           },
         });
+      }
+      if (app.reminderQueue) {
+        await removeAppointmentReminders(app.reminderQueue, existing.id);
       }
       reply.code(204).send();
     },

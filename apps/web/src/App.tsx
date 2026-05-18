@@ -15,6 +15,7 @@ import SettingsIndexRoute from './routes/settings/index-page';
 import ServicesSettingsRoute from './routes/settings/services';
 import SettingsPaymentsRoute from './routes/settings/payments';
 import SettingsBillingRoute from './routes/settings/billing';
+import SettingsSmsRoute from './routes/settings/sms';
 import CalendarRoute from './routes/calendar';
 import SignupBillingRoute from './routes/signup/billing';
 import SignupBillingSuccessRoute from './routes/signup/billing-success';
@@ -153,6 +154,14 @@ export default function App(): JSX.Element {
               element={
                 <Authed>
                   <SettingsBillingRoute />
+                </Authed>
+              }
+            />
+            <Route
+              path="/settings/sms"
+              element={
+                <Authed>
+                  <SettingsSmsRoute />
                 </Authed>
               }
             />

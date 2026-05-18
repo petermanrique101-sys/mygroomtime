@@ -38,7 +38,7 @@ Process discipline:
 | 10 | Stripe twin + adapter + subscription billing + webhooks | ✅ done, committed |
 | 11 | Public booking page (read-only) with subdomain routing | ✅ done, committed |
 | 12 | Public booking submit + Stripe Connect deposit | ✅ done, committed |
-| **13** | **Tier gating + upgrade/downgrade flow** | **← next, stub in `NEXT_CHUNK.md` (two policy questions to resolve first)** |
+| **13** | **Tier upgrade/downgrade + Stripe Customer Portal** | **← next, prompt in `NEXT_CHUNK.md`** |
 | 14 | Twin: Twilio + adapter + outbound SMS | pending |
 | 15 | Scheduled SMS jobs (48h, 2h, post-appt) | pending |
 | 16 | Route optimization + day route view | pending |
